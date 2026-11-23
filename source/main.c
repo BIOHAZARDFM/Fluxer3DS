@@ -1147,93 +1147,97 @@ static void draw_button(
         0.48f, COL_TEXT);
 }
 
-static void render_bottom(void)
-{
-    C2D_DrawRectSolid(
-        0, 0, 0.5f, 320, 34, COL_PANEL);
-
-    draw_text("fluxer", 14, 7, 0.68f, COL_TEXT);
-    draw_text("3DS", 265, 9, 0.40f, COL_MUTED);
-
-    if (app_state == 0 || app_state == 3 || app_state == 4) {
-        C2D_DrawRectSolid(
-            10, 43, 0.5f, 300, 130, COL_PANEL);
-
-        draw_text(
-            "Welcome to Fluxer",
-            22, 53, 0.52f, COL_TEXT);
-
-        draw_text(
-            "Sign in to your real account.",
-            22, 82, 0.36f, COL_MUTED);
-
-        draw_text(
-            status_text,
-            22, 113, 0.27f,
-            app_state == 3 ? COL_RED : COL_MUTED);
-
-        draw_button(
-            10, 185, 300, 45,
-            app_state == 4 ? "Verifying security check..." : "Sign in with email and password",
-            app_state == 4 ? COL_PANEL2 : COL_ACCENT);
-    }
-    else if (app_state == 1) {
-        C2D_DrawRectSolid(
-            10, 43, 0.5f, 300, 130, COL_PANEL);
-
-        draw_text(
-            "Two-factor authentication",
-            22, 53, 0.42f, COL_TEXT);
-
-        draw_text(
-            "Use your authenticator app",
-            22, 82, 0.34f, COL_MUTED);
-
-        draw_text(
-            status_text,
-            22, 120, 0.28f, COL_GREEN);
-
-        draw_button(
-            10, 185, 300, 45,
-            "Enter verification code",
-            COL_ACCENT);
-    }
-    else if(app_state==2) {
-        int i,count=0;
-        if(screen_state==0) {
-            count=dm_count+guild_count; draw_text("DIRECT MESSAGES / SERVERS",12,43,0.32f,COL_MUTED);
-            for(i=0;i<5&&i+list_offset<count;i++) { int idx=i+list_offset; float y=65+i*34; const char *name=idx<dm_count?dm_items[idx].name:guild_items[idx-dm_count].name;
-                C2D_DrawRectSolid(8,y,0.5f,304,30,idx==selected_index?COL_ACCENT:COL_PANEL); draw_text(idx<dm_count?"@":"#",14,y+6,0.36f,COL_MUTED); draw_text(name,32,y+5,0.42f,COL_TEXT); }
-        } else if(screen_state==1) {
-            draw_text("CHANNELS",12,43,0.34f,COL_MUTED);
-            for(i=0;i<5&&i+list_offset<channel_count;i++) { int idx=i+list_offset; float y=65+i*34; C2D_DrawRectSolid(8,y,0.5f,304,30,idx==selected_index?COL_ACCENT:COL_PANEL); draw_text(channel_items[idx].type==4?"v":(channel_items[idx].type==2?"~":"#"),14,y+6,0.36f,COL_MUTED); draw_text(channel_items[idx].name,32,y+5,0.42f,COL_TEXT); }
-        } else {
-            draw_text(selected_channel_name,12,43,0.43f,COL_TEXT);
-            for(i=0;i<5&&i+list_offset<message_count;i++) { int idx=message_count-1-(i+list_offset); float y=65+i*34; C2D_DrawRectSolid(8,y,0.5f,304,30,COL_PANEL); draw_text(message_items[idx].author,14,y+1,0.34f,COL_ACCENT); draw_text(message_items[idx].content,14,y+15,0.33f,COL_TEXT); }
-            draw_button(8,210,304,28,"A: Send message",COL_ACCENT);
+static void draw_tile(float x,float y,float w,float h,const char *symbol,const char *name,int selected) {
+    C2D_DrawRectSolid(x,y,0.5f,w,h,selected?COL_ACCENT:COL_PANEL);
+    C2D_DrawRectSolid(x+7,y+7,0.5f,34,h-14,COL_PANEL2);
+    draw_text(symbol,x+14,y+15,0.48f,COL_TEXT);
+    draw_text(name,x+48,y+17,0.36f,COL_TEXT);
+}
+static void render_bottom(void) {
+    int i;
+    C2D_DrawRectSolid(0,0,0.5f,320,34,COL_PANEL);
+    draw_text("fluxer",12,7,0.62f,COL_TEXT);
+    if(app_state!=2) {
+        if(app_state==0||app_state==3||app_state==4) {
+            C2D_DrawRectSolid(10,43,0.5f,300,130,COL_PANEL);
+            draw_text("Welcome to Fluxer",22,53,0.52f,COL_TEXT);
+            draw_text("Sign in to your real account.",22,82,0.36f,COL_MUTED);
+            draw_text(status_text,22,113,0.27f,app_state==3?COL_RED:COL_MUTED);
+            draw_button(10,185,300,45,app_state==4?"Verifying security check...":"Sign in with email and password",app_state==4?COL_PANEL2:COL_ACCENT);
+        } else if(app_state==1) {
+            C2D_DrawRectSolid(10,43,0.5f,300,130,COL_PANEL);
+            draw_text("Two-factor authentication",22,53,0.42f,COL_TEXT);
+            draw_text("Use your authenticator app",22,82,0.34f,COL_MUTED);
+            draw_text(status_text,22,120,0.28f,COL_GREEN);
+            draw_button(10,185,300,45,"Enter verification code",COL_ACCENT);
         }
+        return;
+    }
+    if(screen_state==0||screen_state==1||screen_state==3) {
+        int total=screen_state==0?guild_count+1:(screen_state==1?channel_count:friend_count);
+        draw_text(screen_state==0?"YOUR COMMUNITIES":(screen_state==1?"COMMUNITY CHANNELS":"FRIENDS"),12,40,0.31f,COL_MUTED);
+        for(i=0;i<6&&list_offset+i<total;i++) {
+            int idx=list_offset+i,col=i%2,row=i/2; float x=8+col*154,y=61+row*55; char label[72],symbol[8];
+            if(screen_state==0) {
+                if(idx==0) { snprintf(label,sizeof(label),"Friends"); snprintf(symbol,sizeof(symbol),"F"); }
+                else { snprintf(label,sizeof(label),"%s",guild_items[idx-1].name); snprintf(symbol,sizeof(symbol),"C"); }
+            } else if(screen_state==1) {
+                snprintf(label,sizeof(label),"%s",channel_items[idx].name);
+                snprintf(symbol,sizeof(symbol),"%s",channel_items[idx].type==4?"DIR":(channel_items[idx].type==2?"VC":"#"));
+            } else { snprintf(label,sizeof(label),"%s",friend_items[idx].name); snprintf(symbol,sizeof(symbol),"@"); }
+            draw_tile(x,y,146,48,symbol,label,idx==selected_index);
+        }
+        draw_text("Tap a tile   B: back   X: log out",10,224,0.27f,COL_MUTED);
+    } else if(screen_state==2) {
+        static const char *faces[]={":)",":(",":D",";)","<3",":P","xD",":O"};
+        draw_text("MESSAGE COMPOSER",12,40,0.31f,COL_MUTED);
+        if(emoji_panel_open) {
+            for(i=0;i<8;i++) { int col=i%4,row=i/4; float x=8+col*78,y=66+row*46; C2D_DrawRectSolid(x,y,0.5f,72,38,COL_PANEL2); draw_text(faces[i],x+15,y+11,0.42f,COL_TEXT); }
+        } else {
+            C2D_DrawRectSolid(8,65,0.5f,304,96,COL_PANEL);
+            draw_text("Draft:",16,73,0.30f,COL_MUTED);
+            draw_text(message_draft[0]?message_draft:"Your message will appear here.",16,99,0.32f,message_draft[0]?COL_TEXT:COL_MUTED);
+        }
+        C2D_DrawRectSolid(8,174,0.5f,174,38,COL_PANEL2); draw_text("KEYBOARD",18,185,0.34f,COL_TEXT);
+        C2D_DrawRectSolid(188,174,0.5f,40,38,COL_ACCENT); draw_text(":)",196,184,0.40f,COL_TEXT);
+        C2D_DrawRectSolid(232,174,0.5f,80,38,COL_GREEN); draw_text("SEND",247,185,0.34f,COL_TEXT);
+        draw_text("B: back   X: emoji panel",10,222,0.26f,COL_MUTED);
+    }
+    if(transition_active) {
+        float t=(float)(osGetTime()-transition_started)/320.0f; float size,alpha;
+        if(t>1.0f)t=1.0f;
+        size=40.0f+280.0f*t; alpha=255.0f*(1.0f-t);
+        C2D_DrawRectSolid(0,0,0.1f,320,240,C2D_Color32(12,14,20,(u8)alpha));
+        C2D_DrawRectSolid(160-size/2,120-size/2,0.0f,size,size,COL_ACCENT);
+        if(pending_guild_index>=0&&pending_guild_index<guild_count) draw_text(guild_items[pending_guild_index].name,160-size*0.42f,112,0.44f,COL_TEXT);
     }
 }
-
-static void render_top(void)
-{
-    draw_text(
-        "FLUXER 3DS",
-        22, 22, 0.8f, COL_TEXT);
-
-    draw_text(
-        "A lightweight third-party client",
-        22, 58, 0.42f, COL_MUTED);
-
-    C2D_DrawRectSolid(
-        22, 92, 0.5f, 356, 2, COL_PANEL2);
-
-    if(app_state==2) {
-        draw_text(account_name,22,105,0.48f,COL_GREEN); draw_text(home_status,22,136,0.34f,COL_MUTED);
-        if(screen_state==0) draw_text("UP/DOWN select  A open  X logout  START exit",22,174,0.40f,COL_TEXT);
-        else if(screen_state==1) draw_text("A open channel   B back",22,174,0.40f,COL_TEXT);
-        else draw_text("UP/DOWN scroll  A send  B back",22,174,0.40f,COL_TEXT);
+static void render_top(void) {
+    int i;
+    if(app_state==2&&screen_state==2) {
+        C2D_DrawRectSolid(0,0,0.5f,400,42,COL_PANEL);
+        draw_text(selected_channel_name,14,10,0.52f,COL_TEXT);
+        draw_text(account_name,280,13,0.30f,COL_GREEN);
+        for(i=0;i<7&&i+list_offset<message_count;i++) {
+            int idx=message_count-1-(i+list_offset); float y=51+i*26;
+            C2D_DrawRectSolid(10,y,0.5f,380,23,COL_PANEL);
+            draw_text(message_items[idx].author,17,y+2,0.31f,COL_ACCENT);
+            draw_text(message_items[idx].content,116,y+3,0.30f,COL_TEXT);
+        }
+        draw_text(home_status,14,190,0.30f,COL_MUTED);
+        draw_text("UP/DOWN: history   B: return to tiles",14,213,0.32f,COL_MUTED);
+    } else if(app_state==2) {
+        draw_text("FLUXER",20,18,0.86f,COL_TEXT);
+        draw_text("Your conversations, arranged as tiles.",22,60,0.46f,COL_MUTED);
+        C2D_DrawRectSolid(22,92,0.5f,356,2,COL_PANEL2);
+        draw_text(account_name,22,110,0.48f,COL_GREEN);
+        if(screen_state==0) { draw_text("Choose Friends to open your friend tiles,",22,151,0.42f,COL_TEXT); draw_text("or choose a community to browse its channels.",22,179,0.42f,COL_TEXT); }
+        else if(screen_state==1) { draw_text("Community channels",22,151,0.48f,COL_TEXT); draw_text(home_status,22,181,0.38f,COL_MUTED); }
+        else { draw_text("Your friends",22,151,0.48f,COL_TEXT); draw_text(home_status,22,181,0.38f,COL_MUTED); }
     } else {
+        draw_text("FLUXER 3DS",22,22,0.8f,COL_TEXT);
+        draw_text("A lightweight third-party client",22,58,0.42f,COL_MUTED);
+        C2D_DrawRectSolid(22,92,0.5f,356,2,COL_PANEL2);
         draw_text("Fluxer account sign-in",22,112,0.48f,COL_TEXT);
         draw_text("Official Fluxer API  |  HTTPS",22,145,0.38f,COL_MUTED);
         draw_text("No calls or video features",22,177,0.34f,COL_MUTED);
