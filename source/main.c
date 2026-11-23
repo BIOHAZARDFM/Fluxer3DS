@@ -1225,10 +1225,20 @@ int main(int argc, char *argv[])
 
         touchPosition touch;
         int touched = 0;
+        int list_touched = 0;
+        int touch_row = -1;
 
         if (down & KEY_TOUCH) {
             hidTouchRead(&touch);
 
+            /* The lower-screen chat list is directly touch-selectable. */
+            if (touch.px >= 8 && touch.px <= 312 &&
+                touch.py >= 65 && touch.py < 235) {
+                list_touched = 1;
+                touch_row = (touch.py - 65) / 34;
+            }
+
+            /* Keep the login/send button hit area for the existing screens. */
             touched =
                 touch.px >= 10 &&
                 touch.px <= 310 &&
@@ -1286,6 +1296,14 @@ int main(int argc, char *argv[])
         }
         else if(app_state==2) {
             int total=screen_state==0?dm_count+guild_count:(screen_state==1?channel_count:message_count);
+            int open_selected = 0;
+            if (list_touched && screen_state < 2 && touch_row >= 0 && touch_row < 5) {
+                int tapped_index = list_offset + touch_row;
+                if (tapped_index < total) {
+                    selected_index = tapped_index;
+                    open_selected = 1;
+                }
+            }
             if (down & KEY_X) {
                 delete_saved_session();
                 memset(session_token, 0, sizeof(session_token));
@@ -1299,8 +1317,15 @@ int main(int argc, char *argv[])
             else if(down&KEY_B) { if(screen_state==2) { screen_state=active_is_dm?0:1; selected_index=active_channel; list_offset=0; } else if(screen_state==1) { screen_state=0; selected_index=dm_count+active_guild; list_offset=0; } }
             else if(down&KEY_DOWN) { if(total>0&&selected_index<total-1) selected_index++; if(selected_index>=list_offset+5) list_offset=selected_index-4; }
             else if(down&KEY_UP) { if(selected_index>0) selected_index--; if(selected_index<list_offset) list_offset=selected_index; }
-            else if(down&KEY_A) {
-                if(screen_state==0) { if(selected_index<dm_count) load_messages(dm_items[selected_index].id,dm_items[selected_index].name,1,selected_index); else { int gi=selected_index-dm_count; if(gi>=0&&gi<guild_count) load_guild_channels(gi); } }
+            else if((down&KEY_A) || open_selected || (touched && screen_state==2)) {
+                if(screen_state==0) {
+                    if(selected_index<dm_count)
+                        load_messages(dm_items[selected_index].id,dm_items[selected_index].name,1,selected_index);
+                    else {
+                        int gi=selected_index-dm_count;
+                        if(gi>=0&&gi<guild_count) load_guild_channels(gi);
+                    }
+                }
                 else if(screen_state==1&&selected_index<channel_count) {
                     int type=channel_items[selected_index].type;
                     if(type==4) snprintf(home_status,sizeof(home_status),"Category: channels are shown in this list");
