@@ -64,60 +64,121 @@ static void set_error(char *detail, size_t size,
     }
 }
 
+static int hex_digit_value(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static unsigned int read_json_u16(const char *p)
+{
+    unsigned int value = 0;
+    int i;
+    for (i = 0; i < 4; i++) {
+        int h = hex_digit_value(p[i]);
+        if (h < 0) return 0xFFFFFFFFu;
+        value = (value << 4) | (unsigned int)h;
+    }
+    return value;
+}
+
+static void append_utf8_codepoint(char *out, size_t cap, size_t *used,
+                                  unsigned int cp)
+{
+    unsigned char bytes[4];
+    size_t count, i;
+    if (cp <= 0x7F) { bytes[0] = (unsigned char)cp; count = 1; }
+    else if (cp <= 0x7FF) {
+        bytes[0] = (unsigned char)(0xC0 | (cp >> 6));
+        bytes[1] = (unsigned char)(0x80 | (cp & 0x3F)); count = 2;
+    } else if (cp <= 0xFFFF) {
+        bytes[0] = (unsigned char)(0xE0 | (cp >> 12));
+        bytes[1] = (unsigned char)(0x80 | ((cp >> 6) & 0x3F));
+        bytes[2] = (unsigned char)(0x80 | (cp & 0x3F)); count = 3;
+    } else if (cp <= 0x10FFFF) {
+        bytes[0] = (unsigned char)(0xF0 | (cp >> 18));
+        bytes[1] = (unsigned char)(0x80 | ((cp >> 12) & 0x3F));
+        bytes[2] = (unsigned char)(0x80 | ((cp >> 6) & 0x3F));
+        bytes[3] = (unsigned char)(0x80 | (cp & 0x3F)); count = 4;
+    } else return;
+    if (*used + count >= cap) return;
+    for (i = 0; i < count; i++) out[(*used)++] = (char)bytes[i];
+}
+
 static int json_string(const char *json, const char *key,
                        char *out, size_t out_size)
 {
     char needle[80];
     const char *p;
     size_t n = 0;
+    int truncated = 0;
 
-    if (!json || !key || !out || out_size < 2)
-        return 0;
-
+    if (!json || !key || !out || out_size < 2) return 0;
+    out[0] = '\0';
     snprintf(needle, sizeof(needle), "\"%s\"", key);
-
     p = strstr(json, needle);
-
-    if (!p)
-        return 0;
-
+    if (!p) return 0;
     p = strchr(p + strlen(needle), ':');
-
-    if (!p)
-        return 0;
-
+    if (!p) return 0;
+    p++;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p != '"') return 0;
     p++;
 
-    while (*p == ' ' || *p == '\t' ||
-           *p == '\r' || *p == '\n')
-        p++;
-
-    if (*p != '"')
-        return 0;
-
-    p++;
-
-    while (*p && *p != '"' && n + 1 < out_size) {
-        if (*p == '\\' && p[1]) {
+    while (*p && *p != '"') {
+        unsigned int cp;
+        if (*p == '\\') {
             p++;
-
-            if (*p == 'n')
-                out[n++] = '\n';
-            else if (*p == 'r')
-                out[n++] = '\r';
-            else if (*p == 't')
-                out[n++] = '\t';
-            else
-                out[n++] = *p;
-
+            if (!*p) break;
+            if (*p == 'u') {
+                unsigned int first;
+                p++;
+                if (strlen(p) < 4 || (first = read_json_u16(p)) == 0xFFFFFFFFu) {
+                    if (!truncated && n + 1 < out_size) out[n++] = '?';
+                    else truncated = 1;
+                    break;
+                }
+                p += 4;
+                cp = first;
+                if (first >= 0xD800 && first <= 0xDBFF &&
+                    p[0] == '\\' && p[1] == 'u' && strlen(p + 2) >= 4) {
+                    unsigned int second = read_json_u16(p + 2);
+                    if (second >= 0xDC00 && second <= 0xDFFF) {
+                        cp = 0x10000 + ((first - 0xD800) << 10) + (second - 0xDC00);
+                        p += 6;
+                    } else cp = '?';
+                } else if (first >= 0xD800 && first <= 0xDFFF) cp = '?';
+                if (!truncated) {
+                    size_t before = n;
+                    append_utf8_codepoint(out, out_size, &n, cp);
+                    if (n == before) truncated = 1;
+                }
+                continue;
+            }
+            switch (*p) {
+                case '"': cp = '"'; break;
+                case '\\': cp = '\\'; break;
+                case '/': cp = '/'; break;
+                case 'b': cp = '\b'; break;
+                case 'f': cp = '\f'; break;
+                case 'n': cp = '\n'; break;
+                case 'r': cp = '\r'; break;
+                case 't': cp = '\t'; break;
+                default: cp = (unsigned char)*p; break;
+            }
             p++;
         } else {
-            out[n++] = *p++;
+            cp = (unsigned char)*p++;
+        }
+        if (!truncated) {
+            size_t before = n;
+            append_utf8_codepoint(out, out_size, &n, cp);
+            if (n == before) truncated = 1;
         }
     }
-
     out[n] = '\0';
-
     return (*p == '"');
 }
 
@@ -1123,19 +1184,93 @@ static void draw_text(
     float scale, u32 color)
 {
     C2D_Text text;
+    char safe_text[768];
+    size_t in = 0, out = 0;
 
-    C2D_TextFontParse(
-        &text, ui_font, text_buffer, value);
+    /*
+       The 3DS system font does not contain every Unicode glyph.
+       Keep ASCII, transliterate common accented Latin letters, and
+       replace each other valid UTF-8 character with '?' so a fancy
+       server name can never break text parsing or tile navigation.
+    */
+    if (!value) value = "";
+    while (value[in] && out + 2 < sizeof(safe_text)) {
+        unsigned char c = (unsigned char)value[in];
+        unsigned int cp;
+        size_t bytes;
+        if (c < 0x80) {
+            safe_text[out++] = (char)c;
+            in++;
+            continue;
+        }
+        if ((c & 0xE0) == 0xC0 && value[in+1] &&
+            (((unsigned char)value[in+1] & 0xC0) == 0x80)) {
+            cp = ((c & 0x1F) << 6) | ((unsigned char)value[in+1] & 0x3F);
+            bytes = 2;
+        } else if ((c & 0xF0) == 0xE0 && value[in+1] && value[in+2] &&
+                   (((unsigned char)value[in+1] & 0xC0) == 0x80) &&
+                   (((unsigned char)value[in+2] & 0xC0) == 0x80)) {
+            cp = ((c & 0x0F) << 12) |
+                 (((unsigned char)value[in+1] & 0x3F) << 6) |
+                 ((unsigned char)value[in+2] & 0x3F);
+            bytes = 3;
+        } else if ((c & 0xF8) == 0xF0 && value[in+1] && value[in+2] && value[in+3] &&
+                   (((unsigned char)value[in+1] & 0xC0) == 0x80) &&
+                   (((unsigned char)value[in+2] & 0xC0) == 0x80) &&
+                   (((unsigned char)value[in+3] & 0xC0) == 0x80)) {
+            cp = ((c & 0x07) << 18) |
+                 (((unsigned char)value[in+1] & 0x3F) << 12) |
+                 (((unsigned char)value[in+2] & 0x3F) << 6) |
+                 ((unsigned char)value[in+3] & 0x3F);
+            bytes = 4;
+        } else {
+            safe_text[out++] = '?';
+            in++;
+            continue;
+        }
+        in += bytes;
+        switch (cp) {
+            case 0x00C0: case 0x00C1: case 0x00C2: case 0x00C3:
+            case 0x00C4: case 0x00C5: case 0x0100: case 0x0102:
+            case 0x0104: safe_text[out++] = 'A'; break;
+            case 0x00E0: case 0x00E1: case 0x00E2: case 0x00E3:
+            case 0x00E4: case 0x00E5: case 0x0101: case 0x0103:
+            case 0x0105: safe_text[out++] = 'a'; break;
+            case 0x00C7: case 0x0106: case 0x010C: safe_text[out++] = 'C'; break;
+            case 0x00E7: case 0x0107: case 0x010D: safe_text[out++] = 'c'; break;
+            case 0x00C8: case 0x00C9: case 0x00CA: case 0x00CB:
+            case 0x0112: case 0x0116: case 0x0118: safe_text[out++] = 'E'; break;
+            case 0x00E8: case 0x00E9: case 0x00EA: case 0x00EB:
+            case 0x0113: case 0x0117: case 0x0119: safe_text[out++] = 'e'; break;
+            case 0x00CC: case 0x00CD: case 0x00CE: case 0x00CF:
+            case 0x012A: case 0x012E: safe_text[out++] = 'I'; break;
+            case 0x00EC: case 0x00ED: case 0x00EE: case 0x00EF:
+            case 0x012B: case 0x012F: safe_text[out++] = 'i'; break;
+            case 0x00D1: case 0x0143: case 0x0147: safe_text[out++] = 'N'; break;
+            case 0x00F1: case 0x0144: case 0x0148: safe_text[out++] = 'n'; break;
+            case 0x00D2: case 0x00D3: case 0x00D4: case 0x00D5:
+            case 0x00D6: case 0x00D8: case 0x014C: safe_text[out++] = 'O'; break;
+            case 0x00F2: case 0x00F3: case 0x00F4: case 0x00F5:
+            case 0x00F6: case 0x00F8: case 0x014D: safe_text[out++] = 'o'; break;
+            case 0x00D9: case 0x00DA: case 0x00DB: case 0x00DC:
+            case 0x016A: case 0x0172: safe_text[out++] = 'U'; break;
+            case 0x00F9: case 0x00FA: case 0x00FB: case 0x00FC:
+            case 0x016B: case 0x0173: safe_text[out++] = 'u'; break;
+            case 0x00DD: case 0x0178: safe_text[out++] = 'Y'; break;
+            case 0x00FD: case 0x00FF: safe_text[out++] = 'y'; break;
+            case 0x00DF: safe_text[out++] = 's'; safe_text[out++] = 's'; break;
+            case 0x00C6: safe_text[out++] = 'A'; safe_text[out++] = 'E'; break;
+            case 0x00E6: safe_text[out++] = 'a'; safe_text[out++] = 'e'; break;
+            case 0x0152: safe_text[out++] = 'O'; safe_text[out++] = 'E'; break;
+            case 0x0153: safe_text[out++] = 'o'; safe_text[out++] = 'e'; break;
+            default: safe_text[out++] = '?'; break;
+        }
+    }
+    safe_text[out] = '\0';
 
+    C2D_TextFontParse(&text, ui_font, text_buffer, safe_text);
     C2D_TextOptimize(&text);
-
-    C2D_DrawText(
-        &text,
-        C2D_WithColor,
-        x, y, 0.5f,
-        scale, scale,
-        color
-    );
+    C2D_DrawText(&text, C2D_WithColor, x, y, 0.5f, scale, scale, color);
 }
 
 static void draw_aero_background(int width, int height) {
