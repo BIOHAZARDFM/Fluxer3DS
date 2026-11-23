@@ -5,12 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
+#include <curl/curl.h>
 #include "altcha.h"
 
 #define API_BASE       "https://api.fluxer.app/v1"
 #define SOC_ALIGN      0x1000
 #define SOC_BUFFERSIZE 0x100000
-#define HTTP_POST_SIZE 0x100000
 #define HTTP_BODY_MAX  16384
 #define TOKEN_MAX      2048
 #define INPUT_MAX      384
@@ -152,15 +152,55 @@ static int json_escape(const char *input,
 }
 
 /* ---------------------------------------------------------
-   NETWORK
+   NETWORK - libcurl + mbedTLS
    --------------------------------------------------------- */
+
+typedef struct {
+    char *data;
+    size_t capacity;
+    size_t used;
+} ResponseBuffer;
+
+static size_t curl_write_callback(
+    char *ptr, size_t size, size_t nmemb, void *userdata)
+{
+    ResponseBuffer *buffer = (ResponseBuffer *)userdata;
+    size_t bytes;
+
+    if (!buffer || !buffer->data || size == 0 ||
+        nmemb > ((size_t)-1) / size)
+        return 0;
+
+    bytes = size * nmemb;
+
+    if (bytes > buffer->capacity - buffer->used - 1)
+        return 0;
+
+    memcpy(buffer->data + buffer->used, ptr, bytes);
+    buffer->used += bytes;
+    buffer->data[buffer->used] = '\0';
+
+    return bytes;
+}
+
+static int append_curl_header(
+    struct curl_slist **headers, const char *value)
+{
+    struct curl_slist *next;
+
+    next = curl_slist_append(*headers, value);
+    if (!next)
+        return 0;
+
+    *headers = next;
+    return 1;
+}
 
 static Result init_network(void)
 {
     Result rc;
 
-    soc_buffer = (u32 *)memalign(
-        SOC_ALIGN, SOC_BUFFERSIZE);
+    soc_buffer = (u32 *)memalign(SOC_ALIGN, SOC_BUFFERSIZE);
 
     if (!soc_buffer)
         return -1;
@@ -174,16 +214,14 @@ static Result init_network(void)
     }
 
     /*
-       IMPORTANT:
-       The HTTP POST buffer must not be zero-sized.
+       devkitPro's 3DS curl port uses libctru's socket service
+       and mbedTLS for modern HTTPS/TLS.
     */
-    rc = httpcInit(HTTP_POST_SIZE);
-
-    if (R_FAILED(rc)) {
+    if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
         socExit();
         free(soc_buffer);
         soc_buffer = NULL;
-        return rc;
+        return -1;
     }
 
     network_ready = 1;
@@ -193,7 +231,7 @@ static Result init_network(void)
 static void cleanup_network(void)
 {
     if (network_ready) {
-        httpcExit();
+        curl_global_cleanup();
         network_ready = 0;
     }
 
@@ -202,43 +240,6 @@ static void cleanup_network(void)
         free(soc_buffer);
         soc_buffer = NULL;
     }
-}
-
-static Result add_trust_roots(
-    httpcContext *ctx,
-    char *detail,
-    size_t detail_size)
-{
-    Result rc;
-
-    rc = httpcAddDefaultCert(
-        ctx, SSLC_DefaultRootCert_USERTrust);
-
-    if (R_FAILED(rc)) {
-        set_error(detail, detail_size,
-                  "USERTrust certificate", rc);
-        return rc;
-    }
-
-    rc = httpcAddDefaultCert(
-        ctx, SSLC_DefaultRootCert_COMODO);
-
-    if (R_FAILED(rc)) {
-        set_error(detail, detail_size,
-                  "COMODO certificate", rc);
-        return rc;
-    }
-
-    rc = httpcAddDefaultCert(
-        ctx, SSLC_DefaultRootCert_DigiCert_EV);
-
-    if (R_FAILED(rc)) {
-        set_error(detail, detail_size,
-                  "DigiCert certificate", rc);
-        return rc;
-    }
-
-    return 0;
 }
 
 static Result api_request(
@@ -253,163 +254,141 @@ static Result api_request(
     char *detail,
     size_t detail_size)
 {
-    httpcContext ctx;
+    CURL *easy = NULL;
+    CURLcode cc;
+    struct curl_slist *headers = NULL;
     char url[512];
     char auth_header[TOKEN_MAX + 16];
-
-    Result rc;
-    u32 downloaded = 0;
-    u32 status = 0;
+    char captcha_header[4200];
+    ResponseBuffer output;
+    long status = 0;
+    Result result = -1;
 
     if (detail && detail_size)
         detail[0] = '\0';
 
-    if (!network_ready || !path ||
-        !response || response_size < 2) {
-        set_error(detail, detail_size,
-                  "Invalid request", -1);
+    if (!network_ready || !path || !response ||
+        response_size < 2) {
+        set_error(detail, detail_size, "Invalid request", -1);
         return -1;
     }
 
     snprintf(url, sizeof(url), "%s%s", API_BASE, path);
-
     response[0] = '\0';
 
     if (http_status)
         *http_status = 0;
 
-    rc = httpcOpenContext(&ctx, method, url, 1);
+    output.data = response;
+    output.capacity = response_size;
+    output.used = 0;
 
-    if (R_FAILED(rc)) {
-        set_error(detail, detail_size,
-                  "Opening connection", rc);
-        return rc;
-    }
-
-    rc = httpcSetSSLOpt(&ctx, SSLCOPT_Default);
-
-    if (R_FAILED(rc)) {
-        set_error(detail, detail_size,
-                  "HTTPS setup", rc);
+    easy = curl_easy_init();
+    if (!easy) {
+        if (detail && detail_size)
+            snprintf(detail, detail_size, "Could not create HTTPS client");
         goto done;
     }
 
-    rc = add_trust_roots(
-        &ctx, detail, detail_size);
-
-    if (R_FAILED(rc))
+    if (!append_curl_header(&headers, "Accept: application/json")) {
+        if (detail && detail_size)
+            snprintf(detail, detail_size, "Could not create HTTP headers");
         goto done;
-
-    rc = httpcAddRequestHeaderField(
-        &ctx, "Accept", "application/json");
-
-    if (R_FAILED(rc)) {
-        set_error(detail, detail_size,
-                  "Accept header", rc);
-        goto done;
-    }
-
-    rc = httpcAddRequestHeaderField(
-        &ctx, "User-Agent", "Fluxer3DS/0.2");
-
-    if (R_FAILED(rc)) {
-        set_error(detail, detail_size,
-                  "User-Agent header", rc);
-        goto done;
-    }
-
-    if (captcha_token && captcha_token[0]) {
-        rc = httpcAddRequestHeaderField(&ctx, "X-Captcha-Token", captcha_token);
-        if (R_FAILED(rc)) {
-            set_error(detail, detail_size, "CAPTCHA header", rc);
-            goto done;
-        }
     }
 
     if (auth_token && auth_token[0]) {
         snprintf(auth_header, sizeof(auth_header),
-                 "Bearer %s", auth_token);
+                 "Authorization: Bearer %s", auth_token);
+        if (!append_curl_header(&headers, auth_header)) {
+            if (detail && detail_size)
+                snprintf(detail, detail_size, "Could not create authorization header");
+            goto done;
+        }
+    }
 
-        rc = httpcAddRequestHeaderField(
-            &ctx, "Authorization", auth_header);
-
-        if (R_FAILED(rc)) {
-            set_error(detail, detail_size,
-                      "Authorization header", rc);
+    if (captcha_token && captcha_token[0]) {
+        snprintf(captcha_header, sizeof(captcha_header),
+                 "X-Captcha-Token: %s", captcha_token);
+        if (!append_curl_header(&headers, captcha_header)) {
+            if (detail && detail_size)
+                snprintf(detail, detail_size, "Could not create CAPTCHA header");
             goto done;
         }
     }
 
     if (body) {
-        rc = httpcAddRequestHeaderField(
-            &ctx, "Content-Type", "application/json");
-
-        if (R_FAILED(rc)) {
-            set_error(detail, detail_size,
-                      "Content-Type header", rc);
-            goto done;
-        }
-
-        /*
-           Request bodies passed to this function are
-           explicitly 4-byte aligned by their callers.
-        */
-        rc = httpcAddPostDataRaw(
-            &ctx,
-            (const u32 *)body,
-            (u32)strlen(body));
-
-        if (R_FAILED(rc)) {
-            set_error(detail, detail_size,
-                      "Preparing request body", rc);
+        if (!append_curl_header(&headers,
+                                "Content-Type: application/json")) {
+            if (detail && detail_size)
+                snprintf(detail, detail_size, "Could not create content-type header");
             goto done;
         }
     }
 
-    rc = httpcBeginRequest(&ctx);
+#define CURL_SETOPT(option, value) do { \
+        cc = curl_easy_setopt(easy, option, value); \
+        if (cc != CURLE_OK) { \
+            if (detail && detail_size) \
+                snprintf(detail, detail_size, "%s: %s", \
+                         #option, curl_easy_strerror(cc)); \
+            goto done; \
+        } \
+    } while (0)
 
-    if (R_FAILED(rc)) {
-        set_error(detail, detail_size,
-                  "Sending HTTPS request", rc);
+    CURL_SETOPT(CURLOPT_URL, url);
+    CURL_SETOPT(CURLOPT_HTTPHEADER, headers);
+    CURL_SETOPT(CURLOPT_WRITEFUNCTION, curl_write_callback);
+    CURL_SETOPT(CURLOPT_WRITEDATA, &output);
+    CURL_SETOPT(CURLOPT_USERAGENT, "Fluxer3DS/0.3");
+    CURL_SETOPT(CURLOPT_NOSIGNAL, 1L);
+    CURL_SETOPT(CURLOPT_CONNECTTIMEOUT, 25L);
+    CURL_SETOPT(CURLOPT_TIMEOUT, 75L);
+
+    /* Require modern TLS and keep certificate/hostname checks enabled. */
+    CURL_SETOPT(CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+    CURL_SETOPT(CURLOPT_SSL_VERIFYPEER, 1L);
+    CURL_SETOPT(CURLOPT_SSL_VERIFYHOST, 2L);
+
+    if (method == HTTPC_METHOD_POST) {
+        CURL_SETOPT(CURLOPT_POST, 1L);
+        if (body) {
+            CURL_SETOPT(CURLOPT_POSTFIELDS, body);
+            CURL_SETOPT(CURLOPT_POSTFIELDSIZE, (long)strlen(body));
+        }
+    } else {
+        CURL_SETOPT(CURLOPT_HTTPGET, 1L);
+    }
+
+    cc = curl_easy_perform(easy);
+    if (cc != CURLE_OK) {
+        if (detail && detail_size)
+            snprintf(detail, detail_size, "HTTPS request: %s",
+                     curl_easy_strerror(cc));
         goto done;
     }
 
-    rc = httpcGetResponseStatusCode(&ctx, &status);
-
-    if (R_FAILED(rc)) {
-        set_error(detail, detail_size,
-                  "Receiving HTTP status", rc);
+    cc = curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &status);
+    if (cc != CURLE_OK) {
+        if (detail && detail_size)
+            snprintf(detail, detail_size, "Reading HTTP status: %s",
+                     curl_easy_strerror(cc));
         goto done;
     }
 
     if (http_status)
-        *http_status = status;
+        *http_status = (u32)status;
 
-    if (status != 204) {
-        rc = httpcDownloadData(
-            &ctx,
-            (u8 *)response,
-            (u32)(response_size - 1),
-            &downloaded);
+    result = 0;
 
-        if (R_FAILED(rc) &&
-            rc != (Result)HTTPC_RESULTCODE_DOWNLOADPENDING) {
-            set_error(detail, detail_size,
-                      "Downloading response", rc);
-            goto done;
-        }
-
-        if (downloaded >= response_size)
-            downloaded = (u32)response_size - 1;
-
-        response[downloaded] = '\0';
-    }
-
-    rc = 0;
+#undef CURL_SETOPT
 
 done:
-    httpcCloseContext(&ctx);
-    return rc;
+    if (headers)
+        curl_slist_free_all(headers);
+    if (easy)
+        curl_easy_cleanup(easy);
+
+    return result;
 }
 
 /* ---------------------------------------------------------
