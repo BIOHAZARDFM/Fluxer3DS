@@ -24,14 +24,14 @@ static int app_state = 0; /* 0 = welcome, 1 = waiting for approval, 2 = signed i
 static C2D_Font ui_font;
 static C2D_TextBuf text_buffer;
 
-static const u32 COL_BG       = C2D_Color32(29, 31, 36, 255);
-static const u32 COL_PANEL    = C2D_Color32(39, 42, 49, 255);
-static const u32 COL_PANEL2   = C2D_Color32(49, 53, 62, 255);
-static const u32 COL_ACCENT   = C2D_Color32(115, 83, 220, 255);
-static const u32 COL_TEXT     = C2D_Color32(245, 246, 248, 255);
-static const u32 COL_MUTED    = C2D_Color32(173, 178, 190, 255);
-static const u32 COL_GREEN    = C2D_Color32(88, 190, 133, 255);
-static const u32 COL_RED      = C2D_Color32(225, 104, 104, 255);
+#define COL_BG       C2D_Color32(29, 31, 36, 255)
+#define COL_PANEL    C2D_Color32(39, 42, 49, 255)
+#define COL_PANEL2   C2D_Color32(49, 53, 62, 255)
+#define COL_ACCENT   C2D_Color32(115, 83, 220, 255)
+#define COL_TEXT     C2D_Color32(245, 246, 248, 255)
+#define COL_MUTED    C2D_Color32(173, 178, 190, 255)
+#define COL_GREEN    C2D_Color32(88, 190, 133, 255)
+#define COL_RED      C2D_Color32(225, 104, 104, 255)
 
 static Result init_network(void)
 {
@@ -170,7 +170,7 @@ static Result api_request(HTTPC_RequestMethod method, const char *path,
 
     if (status != 204) {
         rc = httpcDownloadData(&ctx, (u8 *)response, (u32)(response_size - 1), &downloaded);
-        if (R_FAILED(rc) && rc != HTTPC_RESULTCODE_DOWNLOADPENDING) goto done;
+        if (R_FAILED(rc) && rc != (Result)HTTPC_RESULTCODE_DOWNLOADPENDING) goto done;
         if (downloaded >= response_size) downloaded = (u32)response_size - 1;
         response[downloaded] = '\0';
     } else {
@@ -282,7 +282,7 @@ static void verify_session(void)
 static void draw_text(const char *value, float x, float y, float scale, u32 color)
 {
     C2D_Text text;
-    C2D_TextParse(&text, ui_font, text_buffer, value);
+    C2D_TextFontParse(&text, ui_font, text_buffer, value);
     C2D_TextOptimize(&text);
     C2D_DrawText(&text, C2D_WithColor, x, y, 0.5f, scale, scale, color);
 }
