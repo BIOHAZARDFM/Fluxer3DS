@@ -155,6 +155,110 @@ static int json_escape(const char *input,
     return 1;
 }
 
+
+/* ---------------- Fluxer chat browser ---------------- */
+#define MAX_ITEMS 64
+#define MAX_MESSAGES 18
+typedef struct { char id[32]; char name[72]; int type; } ChatItem;
+typedef struct { char author[48]; char content[240]; } ChatMessage;
+static ChatItem dm_items[MAX_ITEMS], guild_items[MAX_ITEMS], channel_items[MAX_ITEMS];
+static ChatMessage message_items[MAX_MESSAGES];
+static int dm_count=0,guild_count=0,channel_count=0,message_count=0;
+static int screen_state=0,selected_index=0,list_offset=0,active_guild=0,active_channel=0,active_is_dm=0;
+static char home_status[160]="Loading Fluxer chats...",selected_channel_name[72]="";
+
+static const char *object_end(const char *p) {
+    int depth=0, quoted=0, escaped=0;
+    for(;*p;p++) {
+        if(quoted) { if(escaped) escaped=0; else if(*p=='\\') escaped=1; else if(*p=='"') quoted=0; }
+        else { if(*p=='"') quoted=1; else if(*p=='{') depth++; else if(*p=='}') { depth--; if(depth==0) return p+1; } }
+    }
+    return NULL;
+}
+static int json_int_value(const char *json,const char *key,int fallback) {
+    char needle[80]; const char *p;
+    snprintf(needle,sizeof(needle),"\"%s\"",key);
+    p=strstr(json,needle); if(!p) return fallback;
+    p=strchr(p+strlen(needle),':'); return p?atoi(p+1):fallback;
+}
+static int parse_items(const char *json,ChatItem *out,int max,int dm) {
+    const char *p=strchr(json,'['); int count=0;
+    if(!p) return 0; p++;
+    while(*p && count<max) {
+        if(*p=='{') {
+            const char *end=object_end(p); char obj[4096]; size_t n;
+            if(!end) break; n=(size_t)(end-p); if(n>=sizeof(obj)) n=sizeof(obj)-1;
+            memcpy(obj,p,n); obj[n]='\0'; memset(&out[count],0,sizeof(out[count]));
+            json_string(obj,"id",out[count].id,sizeof(out[count].id));
+            json_string(obj,"name",out[count].name,sizeof(out[count].name));
+            out[count].type=json_int_value(obj,"type",0);
+            if(dm && !out[count].name[0]) {
+                const char *r=strstr(obj,"\"recipients\"");
+                if(r) json_string(r,"username",out[count].name,sizeof(out[count].name));
+                if(!out[count].name[0]) snprintf(out[count].name,sizeof(out[count].name),"Direct message");
+            }
+            if(out[count].id[0]) count++;
+            p=end;
+        } else p++;
+    }
+    return count;
+}
+static void load_home_data(void) {
+    static char response[HTTP_BODY_MAX]; char detail[128]; u32 code=0;
+    Result rc=api_request(HTTPC_METHOD_GET,"/users/@me/channels",NULL,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
+    if(R_FAILED(rc)||code!=200) { snprintf(home_status,sizeof(home_status),"DM list failed: HTTP %lu",(unsigned long)code); return; }
+    dm_count=parse_items(response,dm_items,MAX_ITEMS,1);
+    rc=api_request(HTTPC_METHOD_GET,"/users/@me/guilds",NULL,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
+    if(R_FAILED(rc)||code!=200) { snprintf(home_status,sizeof(home_status),"Loaded DMs; servers failed: HTTP %lu",(unsigned long)code); return; }
+    guild_count=parse_items(response,guild_items,MAX_ITEMS,0);
+    snprintf(home_status,sizeof(home_status),"%d DMs and %d servers loaded",dm_count,guild_count);
+    screen_state=0; selected_index=0; list_offset=0;
+}
+static void load_guild_channels(int index) {
+    static char response[HTTP_BODY_MAX]; char path[128],detail[128]; u32 code=0; int i,n=0;
+    if(index<0||index>=guild_count) return;
+    snprintf(path,sizeof(path),"/guilds/%s/channels",guild_items[index].id);
+    Result rc=api_request(HTTPC_METHOD_GET,path,NULL,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
+    if(R_FAILED(rc)||code!=200) { snprintf(home_status,sizeof(home_status),"Channels failed: HTTP %lu",(unsigned long)code); return; }
+    channel_count=parse_items(response,channel_items,MAX_ITEMS,0);
+    for(i=0;i<channel_count;i++) if(channel_items[i].type==0||channel_items[i].type==5) channel_items[n++]=channel_items[i];
+    channel_count=n; active_guild=index; screen_state=1; selected_index=0; list_offset=0;
+    snprintf(home_status,sizeof(home_status),"%d text channels",channel_count);
+}
+static void load_messages(const char *channel_id,const char *name,int is_dm,int index) {
+    static char response[HTTP_BODY_MAX]; char path[128],detail[128]; u32 code=0; const char *p;
+    snprintf(path,sizeof(path),"/channels/%s/messages?limit=18",channel_id);
+    Result rc=api_request(HTTPC_METHOD_GET,path,NULL,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
+    if(R_FAILED(rc)||code!=200) { snprintf(home_status,sizeof(home_status),"Messages failed: HTTP %lu",(unsigned long)code); return; }
+    message_count=0; p=strchr(response,'['); if(p) p++;
+    while(p&&*p&&message_count<MAX_MESSAGES) {
+        if(*p=='{') {
+            const char *end=object_end(p); char obj[4096]; size_t n;
+            if(!end) break; n=(size_t)(end-p); if(n>=sizeof(obj)) n=sizeof(obj)-1;
+            memcpy(obj,p,n); obj[n]='\0'; memset(&message_items[message_count],0,sizeof(ChatMessage));
+            json_string(obj,"content",message_items[message_count].content,sizeof(message_items[message_count].content));
+            { const char *a=strstr(obj,"\"author\""); if(a) json_string(a,"username",message_items[message_count].author,sizeof(message_items[message_count].author)); }
+            if(!message_items[message_count].author[0]) snprintf(message_items[message_count].author,sizeof(message_items[message_count].author),"User");
+            message_count++; p=end;
+        } else p++;
+    }
+    active_channel=index; active_is_dm=is_dm; screen_state=2; selected_index=0; list_offset=0;
+    snprintf(selected_channel_name,sizeof(selected_channel_name),"%s",name);
+    snprintf(home_status,sizeof(home_status),"%d recent messages",message_count);
+}
+static void send_chat_message(void) {
+    char content[INPUT_MAX],escaped[INPUT_MAX*2],body[INPUT_MAX*2+64],path[128],response[HTTP_BODY_MAX],detail[128]; u32 code=0;
+    ChatItem *item=active_is_dm?&dm_items[active_channel]:&channel_items[active_channel];
+    if(!keyboard_input("Write a message",content,sizeof(content),0)) return;
+    if(!json_escape(content,escaped,sizeof(escaped))) return;
+    snprintf(body,sizeof(body),"{\"content\":\"%s\"}",escaped);
+    snprintf(path,sizeof(path),"/channels/%s/messages",item->id);
+    Result rc=api_request(HTTPC_METHOD_POST,path,body,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
+    memset(content,0,sizeof(content)); memset(escaped,0,sizeof(escaped)); memset(body,0,sizeof(body));
+    if(R_FAILED(rc)||code!=200) snprintf(home_status,sizeof(home_status),"Send failed: HTTP %lu",(unsigned long)code);
+    else load_messages(item->id,item->name,active_is_dm,active_channel);
+}
+
 /* ---------------------------------------------------------
    NETWORK - libcurl + mbedTLS
    --------------------------------------------------------- */
@@ -626,6 +730,7 @@ static void verify_session(void)
              "Your Fluxer session is verified.");
 
     app_state = 2;
+    load_home_data();
 }
 
 static void submit_password_login(void)
@@ -936,26 +1041,20 @@ static void render_bottom(void)
             "Enter verification code",
             COL_ACCENT);
     }
-    else if (app_state == 2) {
-        C2D_DrawRectSolid(
-            10, 43, 0.5f, 300, 130, COL_PANEL);
-
-        draw_text(
-            "You're signed in!",
-            22, 54, 0.54f, COL_GREEN);
-
-        draw_text(
-            account_name,
-            22, 91, 0.46f, COL_TEXT);
-
-        draw_text(
-            status_text,
-            22, 127, 0.30f, COL_MUTED);
-
-        draw_button(
-            10, 185, 300, 45,
-            "Sign out locally",
-            COL_PANEL2);
+    else if(app_state==2) {
+        int i,count=0;
+        if(screen_state==0) {
+            count=dm_count+guild_count; draw_text("DIRECT MESSAGES / SERVERS",12,43,0.32f,COL_MUTED);
+            for(i=0;i<5&&i+list_offset<count;i++) { int idx=i+list_offset; float y=65+i*34; const char *name=idx<dm_count?dm_items[idx].name:guild_items[idx-dm_count].name;
+                C2D_DrawRectSolid(8,y,0.5f,304,30,idx==selected_index?COL_ACCENT:COL_PANEL); draw_text(idx<dm_count?"@":"#",14,y+7,0.30f,COL_MUTED); draw_text(name,32,y+7,0.34f,COL_TEXT); }
+        } else if(screen_state==1) {
+            draw_text("CHANNELS",12,43,0.34f,COL_MUTED);
+            for(i=0;i<5&&i+list_offset<channel_count;i++) { int idx=i+list_offset; float y=65+i*34; C2D_DrawRectSolid(8,y,0.5f,304,30,idx==selected_index?COL_ACCENT:COL_PANEL); draw_text("#",14,y+7,0.30f,COL_MUTED); draw_text(channel_items[idx].name,32,y+7,0.34f,COL_TEXT); }
+        } else {
+            draw_text(selected_channel_name,12,43,0.36f,COL_TEXT);
+            for(i=0;i<5&&i+list_offset<message_count;i++) { int idx=message_count-1-(i+list_offset); float y=65+i*34; C2D_DrawRectSolid(8,y,0.5f,304,30,COL_PANEL); draw_text(message_items[idx].author,14,y+2,0.26f,COL_ACCENT); draw_text(message_items[idx].content,14,y+15,0.25f,COL_TEXT); }
+            draw_button(8,210,304,28,"A: Send message",COL_ACCENT);
+        }
     }
 }
 
@@ -972,17 +1071,16 @@ static void render_top(void)
     C2D_DrawRectSolid(
         22, 92, 0.5f, 356, 2, COL_PANEL2);
 
-    draw_text(
-        "Milestone 1: account sign-in",
-        22, 112, 0.48f, COL_TEXT);
-
-    draw_text(
-        "Official Fluxer API  |  HTTPS",
-        22, 145, 0.38f, COL_MUTED);
-
-    draw_text(
-        "No calls. No video. No background sync.",
-        22, 177, 0.34f, COL_MUTED);
+    if(app_state==2) {
+        draw_text(account_name,22,105,0.48f,COL_GREEN); draw_text(home_status,22,136,0.34f,COL_MUTED);
+        if(screen_state==0) draw_text("UP/DOWN select  A open  START exit",22,174,0.34f,COL_TEXT);
+        else if(screen_state==1) draw_text("A open channel   B back",22,174,0.34f,COL_TEXT);
+        else draw_text("A send message   B back",22,174,0.34f,COL_TEXT);
+    } else {
+        draw_text("Fluxer account sign-in",22,112,0.48f,COL_TEXT);
+        draw_text("Official Fluxer API  |  HTTPS",22,145,0.38f,COL_MUTED);
+        draw_text("No calls or video features",22,177,0.34f,COL_MUTED);
+    }
 }
 
 /* ---------------------------------------------------------
@@ -1085,27 +1183,16 @@ int main(int argc, char *argv[])
 
             submit_mfa_code();
         }
-        else if (app_state == 2 &&
-                 ((down & KEY_A) || touched)) {
-
-            memset(session_token, 0,
-                   sizeof(session_token));
-
-            memset(mfa_ticket, 0,
-                   sizeof(mfa_ticket));
-
-            memset(account_name, 0,
-                   sizeof(account_name));
-
-            snprintf(account_name,
-                     sizeof(account_name),
-                     "Not signed in");
-
-            snprintf(status_text,
-                     sizeof(status_text),
-                     "Signed out locally.");
-
-            app_state = 0;
+        else if(app_state==2) {
+            int total=screen_state==0?dm_count+guild_count:(screen_state==1?channel_count:message_count);
+            if(down&KEY_B) { if(screen_state==2) { screen_state=active_is_dm?0:1; selected_index=active_channel; list_offset=0; } else if(screen_state==1) { screen_state=0; selected_index=dm_count+active_guild; list_offset=0; } }
+            else if(down&KEY_DOWN) { if(total>0&&selected_index<total-1) selected_index++; if(selected_index>=list_offset+5) list_offset=selected_index-4; }
+            else if(down&KEY_UP) { if(selected_index>0) selected_index--; if(selected_index<list_offset) list_offset=selected_index; }
+            else if(down&KEY_A) {
+                if(screen_state==0) { if(selected_index<dm_count) load_messages(dm_items[selected_index].id,dm_items[selected_index].name,1,selected_index); else { int gi=selected_index-dm_count; if(gi>=0&&gi<guild_count) load_guild_channels(gi); } }
+                else if(screen_state==1&&selected_index<channel_count) load_messages(channel_items[selected_index].id,channel_items[selected_index].name,0,selected_index);
+                else if(screen_state==2) send_chat_message();
+            }
         }
 
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
