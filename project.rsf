@@ -64,7 +64,7 @@ AccessControlInfo:
   SystemCallAccess:
     ArbitrateAddress: 34
     Break: 60
-    CancelTimer: 28
+    CancelTimer: 25
     ClearEvent: 25
     ClearTimer: 29
     CloseHandle: 35
@@ -93,8 +93,6 @@ AccessControlInfo:
     GetThreadContext: 59
     GetThreadId: 55
     GetThreadIdealProcessor: 15
-    GetThreadInfo: 44
-    GetThreadPriority: 11
     GetThreadInfo: 44
     GetThreadPriority: 11
     MapMemoryBlock: 31
