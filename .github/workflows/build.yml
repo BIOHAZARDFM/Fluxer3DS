@@ -16,8 +16,10 @@ jobs:
 
       - name: Install Nintendo 3DS libraries and packaging tools
         run: |
-          dkp-pacman -Sy --noconfirm
-          dkp-pacman -S --needed --noconfirm 3ds-dev 3ds-mbedtls 3ds-curl 3dstools
+          # The official devkitarm image already includes the 3DS toolchain
+          # and 3ds-dev dependencies. Keep its bundled package database:
+          # forcing -Sy here hits the devkitPro mirror's current HTTP 403.
+          dkp-pacman -S --needed --noconfirm 3ds-mbedtls 3ds-curl 3dstools
           echo "$DEVKITPRO/tools/bin" >> "$GITHUB_PATH"
 
       - name: Build cxitool
