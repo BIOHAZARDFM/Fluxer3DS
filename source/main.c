@@ -1289,26 +1289,25 @@ int main(int argc, char *argv[])
         u32 down = hidKeysDown();
 
         touchPosition touch;
-        int touched = 0;
-        int list_touched = 0;
-        int touch_row = -1;
-
-        if (down & KEY_TOUCH) {
+        int touched=0,tile_touched=0,tile_index=-1;
+        int composer_keyboard=0,composer_emoji=0,composer_send=0;
+        if(down&KEY_TOUCH) {
             hidTouchRead(&touch);
-
-            /* The lower-screen chat list is directly touch-selectable. */
-            if (touch.px >= 8 && touch.px <= 312 &&
-                touch.py >= 65 && touch.py < 235) {
-                list_touched = 1;
-                touch_row = (touch.py - 65) / 34;
+            touched=touch.px>=10&&touch.px<=310&&touch.py>=185&&touch.py<=230;
+            if(app_state==2&&screen_state!=2&&touch.py>=61&&touch.py<226&&touch.px>=8&&touch.px<=312) {
+                int col=touch.px<160?0:1,row=(touch.py-61)/55;
+                if(row>=0&&row<3) { tile_touched=1; tile_index=list_offset+row*2+col; }
             }
-
-            /* Keep the login/send button hit area for the existing screens. */
-            touched =
-                touch.px >= 10 &&
-                touch.px <= 310 &&
-                touch.py >= 185 &&
-                touch.py <= 230;
+            if(app_state==2&&screen_state==2) {
+                composer_keyboard=touch.py>=174&&touch.py<=212&&touch.px>=8&&touch.px<184;
+                composer_emoji=touch.py>=174&&touch.py<=212&&touch.px>=188&&touch.px<228;
+                composer_send=touch.py>=174&&touch.py<=212&&touch.px>=232&&touch.px<=312;
+                if(emoji_panel_open&&touch.py>=66&&touch.py<150&&touch.px>=8&&touch.px<=312) {
+                    int ei=((touch.py-66)/46)*4+(touch.px-8)/78;
+                    static const char *faces[]={":)",":(",":D",";)","<3",":P","xD",":O"};
+                    if(ei>=0&&ei<8) append_emoticon(faces[ei]);
+                }
+            }
         }
 
         if (down & KEY_START)
@@ -1360,47 +1359,57 @@ int main(int argc, char *argv[])
             submit_mfa_code();
         }
         else if(app_state==2) {
-            int total=screen_state==0?dm_count+guild_count:(screen_state==1?channel_count:message_count);
-            int open_selected = 0;
-            if (list_touched && screen_state < 2 && touch_row >= 0 && touch_row < 5) {
-                int tapped_index = list_offset + touch_row;
-                if (tapped_index < total) {
-                    selected_index = tapped_index;
-                    open_selected = 1;
+            int total=screen_state==0?guild_count+1:(screen_state==1?channel_count:(screen_state==3?friend_count:message_count));
+            if(down&KEY_X) {
+                if(screen_state==2) emoji_panel_open=!emoji_panel_open;
+                else {
+                    delete_saved_session(); memset(session_token,0,sizeof(session_token)); memset(account_name,0,sizeof(account_name));
+                    snprintf(account_name,sizeof(account_name),"Not signed in");
+                    dm_count=guild_count=channel_count=message_count=friend_count=0;
+                    screen_state=0; selected_index=0; list_offset=0; app_state=0;
+                    snprintf(status_text,sizeof(status_text),"Logged out. Saved session deleted.");
                 }
-            }
-            if (down & KEY_X) {
-                delete_saved_session();
-                memset(session_token, 0, sizeof(session_token));
-                memset(account_name, 0, sizeof(account_name));
-                snprintf(account_name, sizeof(account_name), "Not signed in");
-                dm_count = guild_count = channel_count = message_count = 0;
-                screen_state = 0; selected_index = 0; list_offset = 0;
-                app_state = 0;
-                snprintf(status_text, sizeof(status_text), "Logged out. Saved session deleted.");
-            }
-            else if(down&KEY_B) { if(screen_state==2) { screen_state=active_is_dm?0:1; selected_index=active_channel; list_offset=0; } else if(screen_state==1) { screen_state=0; selected_index=dm_count+active_guild; list_offset=0; } }
-            else if(down&KEY_DOWN) { if(total>0&&selected_index<total-1) selected_index++; if(selected_index>=list_offset+5) list_offset=selected_index-4; }
-            else if(down&KEY_UP) { if(selected_index>0) selected_index--; if(selected_index<list_offset) list_offset=selected_index; }
-            else if((down&KEY_A) || open_selected || (touched && screen_state==2)) {
-                if(screen_state==0) {
-                    if(selected_index<dm_count)
-                        load_messages(dm_items[selected_index].id,dm_items[selected_index].name,1,selected_index);
-                    else {
-                        int gi=selected_index-dm_count;
-                        if(gi>=0&&gi<guild_count) load_guild_channels(gi);
+            } else if(screen_state==2&&composer_keyboard) open_message_keyboard();
+            else if(screen_state==2&&composer_emoji) emoji_panel_open=!emoji_panel_open;
+            else if(screen_state==2&&composer_send) send_chat_message();
+            else if(screen_state==2&&(down&KEY_Y)) open_message_keyboard();
+            else if(screen_state==2&&(down&KEY_A)) send_chat_message();
+            else if(down&KEY_B) {
+                if(screen_state==2) { screen_state=chat_return_screen; selected_index=chat_return_selection; list_offset=(selected_index/6)*6; emoji_panel_open=0; }
+                else if(screen_state==1||screen_state==3) { screen_state=0; selected_index=0; list_offset=0; }
+            } else if(screen_state!=2&&(down&KEY_RIGHT)) { if(total>0&&selected_index<total-1)selected_index++; }
+            else if(screen_state!=2&&(down&KEY_LEFT)) { if(selected_index>0)selected_index--; }
+            else if(screen_state!=2&&(down&KEY_DOWN)) { if(selected_index+2<total)selected_index+=2; else if(selected_index<total-1)selected_index=total-1; }
+            else if(screen_state!=2&&(down&KEY_UP)) { if(selected_index>=2)selected_index-=2; else selected_index=0; }
+            if(screen_state!=2) {
+                if(selected_index>=list_offset+6)list_offset=(selected_index/6)*6;
+                if(selected_index<list_offset)list_offset=(selected_index/6)*6;
+                if(tile_touched&&tile_index>=0&&tile_index<total)selected_index=tile_index;
+                if((down&KEY_A)||tile_touched) {
+                    if(screen_state==0) {
+                        if(selected_index==0) { screen_state=3; selected_index=0; list_offset=0; snprintf(home_status,sizeof(home_status),"%d friends",friend_count); }
+                        else { pending_guild_index=selected_index-1; transition_active=1; transition_started=osGetTime(); }
+                    } else if(screen_state==1&&selected_index<channel_count) {
+                        int type=channel_items[selected_index].type;
+                        if(type==4)snprintf(home_status,sizeof(home_status),"Category tile: channels are listed in this community.");
+                        else if(type==15||type==16)snprintf(home_status,sizeof(home_status),"Forum/media posts are not supported yet.");
+                        else if(type==998)snprintf(home_status,sizeof(home_status),"This channel links to an external destination.");
+                        else load_messages(channel_items[selected_index].id,channel_items[selected_index].name,0,selected_index);
+                    } else if(screen_state==3&&selected_index<friend_count) {
+                        int di=friend_items[selected_index].dm_index;
+                        if(di>=0)load_messages(dm_items[di].id,friend_items[selected_index].name,1,di);
+                        else snprintf(home_status,sizeof(home_status),"No existing DM channel found for this friend.");
                     }
                 }
-                else if(screen_state==1&&selected_index<channel_count) {
-                    int type=channel_items[selected_index].type;
-                    if(type==4) snprintf(home_status,sizeof(home_status),"Category: channels are shown in this list");
-                    else if(type==15||type==16) snprintf(home_status,sizeof(home_status),"Forum/media view is not supported yet");
-                    else load_messages(channel_items[selected_index].id,channel_items[selected_index].name,0,selected_index);
-                }
-                else if(screen_state==2) send_chat_message();
+            } else if(message_count>0) {
+                if(down&KEY_DOWN) { if(selected_index>0)selected_index--; if(selected_index<list_offset)list_offset=selected_index; }
+                else if(down&KEY_UP) { if(selected_index<message_count-1)selected_index++; if(selected_index>=list_offset+7)list_offset=selected_index-6; }
             }
         }
-
+        if(transition_active&&(osGetTime()-transition_started)>=320) {
+            int gi=pending_guild_index; transition_active=0; pending_guild_index=-1;
+            if(gi>=0&&gi<guild_count)load_guild_channels(gi);
+        }
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
 
         C2D_TextBufClear(text_buffer);
