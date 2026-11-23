@@ -14,7 +14,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Install Nintendo 3DS libraries and packaging tools
+      - name: Install Nintendo 3DS libraries
         run: |
           # The official devkitarm image already includes the 3DS toolchain
           # and 3ds-dev dependencies. Keep its bundled package database:
@@ -22,41 +22,13 @@ jobs:
           dkp-pacman -S --needed --noconfirm 3ds-mbedtls 3ds-curl 3dstools
           echo "$DEVKITPRO/tools/bin" >> "$GITHUB_PATH"
 
-      - name: Build cxitool
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential autoconf automake libtool libtool-bin pkg-config
-          git clone --depth 1 --branch cxi-stuff https://github.com/devkitPro/3dstools.git /tmp/3dstools
-          cd /tmp/3dstools
-          autoreconf -fi
-          ./configure
-          make -j2
-          CXITOOL_PATH="$(find . -type f -name cxitool -print -quit)"
-          test -n "$CXITOOL_PATH"
-          install -m 755 "$CXITOOL_PATH" "$DEVKITPRO/tools/bin/cxitool"
-          test -x "$DEVKITPRO/tools/bin/cxitool"
-
-      - name: Install makerom
-        run: |
-          curl -L --fail --retry 3 \
-            -o /tmp/makerom.zip \
-            https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.18.4/makerom-v0.18.4-ubuntu_x86_64.zip
-          mkdir -p /tmp/makerom
-          unzip -q /tmp/makerom.zip -d /tmp/makerom
-          MAKEROM_PATH="$(find /tmp/makerom -type f -name makerom -print -quit)"
-          test -n "$MAKEROM_PATH"
-          chmod +x "$MAKEROM_PATH"
-          echo "$(dirname "$MAKEROM_PATH")" >> "$GITHUB_PATH"
-
-      - name: Find ARM toolchain and packaging tools
+      - name: Find ARM toolchain
         run: |
           export PATH="$DEVKITPRO/devkitARM/bin:$DEVKITPRO/tools/bin:$PATH"
           echo "DEVKITPRO=$DEVKITPRO"
           echo "DEVKITARM=$DEVKITARM"
           command -v arm-none-eabi-gcc
-          command -v cxitool
-          command -v makerom
+          command -v 3dsxtool
 
       - name: Compile 3DSX
         run: |
@@ -64,15 +36,7 @@ jobs:
           make clean
           make
 
-      - name: Package CIA
-        run: |
-          cxitool -n FLUXER3 -c CTR-H-FLXR -t 000400000F1A5300 \
-            Fluxer3DS.3dsx Fluxer3DS.cxi
-          makerom -f cia -o Fluxer3DS.cia -DAPP_ENCRYPTED=false \
-            -rsf project.rsf -target t -i Fluxer3DS.cxi:0:0
-          test -s Fluxer3DS.cia
-
-      - name: Upload 3DSX and CIA
+      - name: Upload 3DSX build
         uses: actions/upload-artifact@v4
         with:
           name: Fluxer3DS-builds
@@ -80,5 +44,4 @@ jobs:
             Fluxer3DS.3dsx
             Fluxer3DS.elf
             Fluxer3DS.smdh
-            Fluxer3DS.cia
           if-no-files-found: error
