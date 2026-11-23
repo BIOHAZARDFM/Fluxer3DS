@@ -1571,7 +1571,8 @@ int main(int argc, char *argv[])
 
         touchPosition touch;
         int touched=0,tile_touched=0,tile_index=-1;
-        int composer_keyboard=0,composer_emoji=0,composer_send=0;\n        int settings_touched=0,settings_theme_touch=-1;
+        int composer_keyboard=0,composer_emoji=0,composer_send=0;
+        int settings_touched=0,settings_theme_touch=-1;
         if(down&KEY_TOUCH) {
             hidTouchRead(&touch);
             if(app_state==2 && touch.py>=36 && touch.py<=60 && touch.px>=230 && touch.px<=314)
