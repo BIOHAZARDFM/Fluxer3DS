@@ -16,7 +16,7 @@ static float cursor_x = 200.0f, cursor_y = 120.0f;
 static int selected_message_index = -1;
 static int message_action_index = 0;
 static char reply_message_id[32] = "";
-static const char *ui_theme_names[] = {"AERO", "SUNSET", "LAVENDER", "MIDNIGHT"};
+static const char *ui_theme_names[] = {"WHITE", "SUNSET", "LAVENDER", "MIDNIGHT"};
 
 #define API_BASE       "https://api.fluxer.app/v1"
 #define SOC_ALIGN      0x1000
@@ -65,33 +65,39 @@ static C2D_TextBuf text_buffer;
 static u32 theme_color(u8 r, u8 g, u8 b, u8 a)
 {
     int rr=r, gg=g, bb=b;
+    int luminance;
     switch (ui_theme_index) {
-        case 1: /* Sunset: warm coral / peach */
+        case 1:
             rr = (rr * 220 + 255 * 35) / 255;
             gg = (gg * 205 + 42 * 50) / 255;
             bb = (bb * 175 + 24 * 80) / 255;
             break;
-        case 2: /* Lavender: cool violet */
+        case 2:
             rr = (rr * 190 + 115 * 65) / 255;
             gg = (gg * 185 + 105 * 70) / 255;
             bb = (bb * 210 + 255 * 45) / 255;
             break;
-        case 3: /* Midnight: brighter ocean-blue, not near-black */
+        case 3:
             rr = 70 + (rr * 150) / 255;
             gg = 112 + (gg * 132) / 255;
             bb = 150 + (bb * 105) / 255;
             break;
-        default: break; /* Original Frutiger Aero */
+        default: break;
+    }
+    if (ui_dark_mode) {
+        /* Meadows: neutral dark-grey surfaces and readable light text. */
+        luminance = (rr * 30 + gg * 59 + bb * 11) / 100;
+        if (luminance >= 190) rr=gg=bb=58;
+        else if (luminance >= 105) rr=gg=bb=82;
+        else rr=gg=bb=222;
+    } else if (ui_theme_index == 0) {
+        /* White theme: clean white surfaces and cool-grey accents. */
+        if (r > 180 && g > 180 && b > 180) rr=gg=bb=250;
+        else if (r < 100 && g < 130 && b < 150) { rr=35; gg=67; bb=82; }
     }
     if (rr > 255) rr=255;
     if (gg > 255) gg=255;
     if (bb > 255) bb=255;
-    if (ui_dark_mode) {
-        /* Keep dark mode readable and colourful rather than crushing it to black. */
-        rr = 48 + (rr * 105) / 255;
-        gg = 55 + (gg * 108) / 255;
-        bb = 68 + (bb * 112) / 255;
-    }
     return C2D_Color32((u8)rr,(u8)gg,(u8)bb,a);
 }
 
@@ -1432,22 +1438,14 @@ static void draw_unzip_overlay(void) {
     }
 }
 static void draw_aero_tile(float x,float y,float w,float h,const char *symbol,const char *name,int selected) {
-    u32 face=selected?theme_color(58,169,205,255):theme_color(225,247,251,248);
-    u32 ink=selected?theme_color(255,255,255,255):COL_TEXT;
-    /* Soft cast shadow and two offset bevel layers create a raised glass tile. */
-    C2D_DrawRectSolid(x+4,y+6,0.58f,w,h,theme_color(12,67,96,95));
-    C2D_DrawRectSolid(x+2,y+3,0.50f,w,h,theme_color(88,163,188,155));
-    C2D_DrawRectSolid(x,y,0.40f,w,h,face);
-    C2D_DrawRectSolid(x+2,y+2,0.30f,w-4,h*0.42f,selected?theme_color(255,255,255,95):theme_color(255,255,255,155));
-    /* Bright top/left bevel and darker lower/right bevel simulate thickness. */
-    C2D_DrawRectSolid(x+2,y+2,0.24f,w-4,1,theme_color(255,255,255,230));
-    C2D_DrawRectSolid(x+2,y+2,0.24f,1,h-4,theme_color(255,255,255,185));
-    C2D_DrawRectSolid(x+2,y+h-3,0.24f,w-4,1,theme_color(34,103,132,125));
-    C2D_DrawRectSolid(x+w-3,y+3,0.24f,1,h-6,theme_color(44,112,139,85));
-    /* Recessed icon well, with its own tiny highlight. */
-    C2D_DrawRectSolid(x+7,y+8,0.22f,34,h-16,theme_color(28,105,139,selected?220:75));
-    C2D_DrawRectSolid(x+9,y+9,0.18f,30,2,theme_color(255,255,255,selected?110:185));
-    draw_text(symbol,x+14,y+15,0.43f,theme_color(255,255,255,255));
+    u32 face=selected?theme_color(58,169,205,255):theme_color(225,247,251,245);
+    u32 ink=selected?C2D_Color32(255,255,255,255):COL_TEXT;
+    /* Simple glossy tile; avoids the heavier discarded bevel pass. */
+    C2D_DrawRectSolid(x+2,y+3,0.5f,w,h,theme_color(22,91,119,60));
+    C2D_DrawRectSolid(x,y,0.4f,w,h,face);
+    C2D_DrawRectSolid(x+2,y+2,0.3f,w-4,h*0.40f,selected?theme_color(255,255,255,75):theme_color(255,255,255,125));
+    C2D_DrawRectSolid(x+7,y+7,0.2f,34,h-14,selected?theme_color(24,126,162,255):theme_color(151,216,231,255));
+    draw_text(symbol,x+14,y+15,0.43f,C2D_Color32(255,255,255,255));
     draw_text(name,x+48,y+14,0.43f,ink);
 }
 static void render_bottom(void) {
@@ -1485,7 +1483,7 @@ static void render_bottom(void) {
                 else { snprintf(label,sizeof(label),"%s",guild_items[idx-1].name); snprintf(symbol,sizeof(symbol),"C"); }
             } else if(screen_state==1) {
                 /* Channel rows use the familiar channel-type glyphs, not text labels. */
-                label[0]='\0';
+                snprintf(label,sizeof(label),"%s",channel_items[idx].name);
                 switch(channel_items[idx].type) {
                     case 0: snprintf(symbol,sizeof(symbol),"#"); break;
                     case 2: snprintf(symbol,sizeof(symbol),"VC"); break;
@@ -1509,8 +1507,8 @@ static void render_bottom(void) {
             draw_aero_button(14,96+ti*25,292,22,ui_theme_names[ti],
                 ti==ui_theme_index?COL_GREEN:theme_color(74,150,183,255));
         }
-        draw_text("Appearance mode",14,201,0.34f,COL_MUTED);
-        draw_aero_button(174,194,132,28,ui_dark_mode?"DARK MODE":"LIGHT MODE",COL_ACCENT);
+        draw_text("Appearance",14,201,0.34f,COL_MUTED);
+        draw_aero_button(174,194,132,28,ui_dark_mode?"MEADOWS":"WHITE THEME",COL_ACCENT);
         draw_text("A: select   B: back",14,229,0.30f,COL_TEXT);
     } else if(screen_state==5) {
         static const char *actions[]={"Reply","Heart","Thumbs up","Thumbs down","Laugh","Sad"};
