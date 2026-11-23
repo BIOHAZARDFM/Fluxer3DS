@@ -131,7 +131,20 @@ static int b64_encode(const unsigned char *src, size_t len, char *dst, size_t ca
     return 1;
 }
 
-int altcha_solve(const char *error_json, char *token, size_t token_size) {
+static size_t solver_nonce_len, solver_salt_len, solver_key_len;
+static unsigned long solver_cost, solver_counter;
+static mbedtls_md_context_t solver_mdctx;
+static int solver_md_ready, solver_active;
+
+void altcha_cancel(void) {
+    if (solver_md_ready) { mbedtls_md_free(&solver_mdctx); solver_md_ready = 0; }
+    solver_active = 0;
+    memset(password, 0, sizeof(password));
+    memset(derived, 0, sizeof(derived));
+}
+unsigned long altcha_progress(void) { return solver_counter; }
+
+int altcha_begin(const char *error_json) {
     /* Keep large ALTCHA work buffers in static storage: the 3DS
        default thread stack is too small for nested HTTPS + PBKDF2. */
     static char challenge[ALTCHA_MAX_CHALLENGE];
@@ -140,14 +153,13 @@ int altcha_solve(const char *error_json, char *token, size_t token_size) {
     static char derived_hex[ALTCHA_MAX_KEY * 2 + 1];
     static char payload[ALTCHA_MAX_CHALLENGE + 512];
     static unsigned char nonce[128], salt[128], password[132], derived[ALTCHA_MAX_KEY];
-    size_t nonce_len = 0, salt_len = 0, key_len = 32;
-    unsigned long cost = 0, counter;
+    unsigned long k;
     const mbedtls_md_info_t *md;
-    mbedtls_md_context_t mdctx;
-    u64 start;
-    int rc = 0;
-
-    if (!error_json || !token || token_size < 32) return 0;
+    altcha_cancel();
+    if (!error_json) return 0;
+    solver_nonce_len = solver_salt_len = 0;
+    solver_key_len = 32;
+    solver_cost = 0;
     if (!jobject(error_json, "altcha_challenge", challenge, sizeof(challenge))) return 0;
     if (!jobject(challenge, "parameters", params, sizeof(params))) return 0;
     if (!jstring(params, "algorithm", algorithm, sizeof(algorithm)) ||
@@ -156,61 +168,61 @@ int altcha_solve(const char *error_json, char *token, size_t token_size) {
         !jstring(params, "salt", salt_hex, sizeof(salt_hex)) ||
         !jstring(params, "keyPrefix", prefix, sizeof(prefix)) ||
         !jstring(challenge, "signature", signature, sizeof(signature)) ||
-        !jint(params, "cost", &cost)) return 0;
-    {
-        unsigned long k;
-        if (jint(params, "keyLength", &k)) key_len = (size_t)k;
-    }
-    if (key_len == 0 || key_len > ALTCHA_MAX_KEY || cost == 0 || cost > 1000000UL) return 0;
-    if (!hex_decode(nonce_hex, nonce, sizeof(nonce), &nonce_len) ||
-        !hex_decode(salt_hex, salt, sizeof(salt), &salt_len) ||
-        nonce_len == 0 || salt_len == 0 || strlen(prefix) > key_len * 2) return 0;
+        !jint(params, "cost", &solver_cost)) return 0;
+    if (jint(params, "keyLength", &k)) solver_key_len = (size_t)k;
+    if (solver_key_len == 0 || solver_key_len > ALTCHA_MAX_KEY ||
+        solver_cost == 0 || solver_cost > 20000UL ||
+        strlen(prefix) == 0 || strlen(prefix) > solver_key_len * 2) return 0;
+    if (!hex_decode(nonce_hex, nonce, sizeof(nonce), &solver_nonce_len) ||
+        !hex_decode(salt_hex, salt, sizeof(salt), &solver_salt_len) ||
+        solver_nonce_len == 0 || solver_salt_len == 0) return 0;
 
     md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     if (!md) return 0;
-    mbedtls_md_init(&mdctx);
-    if (mbedtls_md_setup(&mdctx, md, 1) != 0) {
-        mbedtls_md_free(&mdctx);
+    mbedtls_md_init(&solver_mdctx);
+    if (mbedtls_md_setup(&solver_mdctx, md, 1) != 0) {
+        mbedtls_md_free(&solver_mdctx);
         return 0;
     }
 
-    start = osGetTime();
-    for (counter = 0; counter <= 0xffffffffUL; ++counter) {
-        size_t pass_len = nonce_len + 4;
-        memcpy(password, nonce, nonce_len);
-        password[nonce_len] = (unsigned char)(counter >> 24);
-        password[nonce_len + 1] = (unsigned char)(counter >> 16);
-        password[nonce_len + 2] = (unsigned char)(counter >> 8);
-        password[nonce_len + 3] = (unsigned char)counter;
-
-        rc = mbedtls_pkcs5_pbkdf2_hmac(&mdctx, password, pass_len, salt, salt_len,
-                                       (unsigned int)cost, (uint32_t)key_len, derived);
-        if (rc != 0) {
-            mbedtls_md_free(&mdctx);
-            memset(password, 0, sizeof(password));
-            return 0;
-        }
-        hex_encode(derived, key_len, derived_hex);
-        if (has_prefix(derived_hex, prefix)) break;
-        if ((counter & 31) == 0 && osGetTime() - start > 85000) {
-            mbedtls_md_free(&mdctx);
-            memset(password, 0, sizeof(password));
-            return 0;
-        }
-    }
-    if (counter > 0xffffffffUL) {
-        mbedtls_md_free(&mdctx);
-        return 0;
-    }
-
-    mbedtls_md_free(&mdctx);
-    if (snprintf(payload, sizeof(payload),
-        "{\"challenge\":%s,\"solution\":{\"counter\":%lu,\"derivedKey\":\"%s\"}}",
-        challenge, counter, derived_hex) >= (int)sizeof(payload)) return 0;
-    if (!b64_encode((const unsigned char *)payload, strlen(payload), token, token_size)) return 0;
-
-    memset(password, 0, sizeof(password));
-    memset(derived, 0, sizeof(derived));
-    memset(payload, 0, sizeof(payload));
+    solver_counter = 0;
+    solver_md_ready = 1;
+    solver_active = 1;
     return 1;
+}
+
+int altcha_step(unsigned int budget, char *token, size_t token_size) {
+    unsigned int done = 0;
+    if (!solver_active || !token || token_size < 32) return -1;
+    if (!budget) budget = 1;
+    while (done < budget) {
+        size_t pass_len = solver_nonce_len + 4;
+        int rc;
+        if (solver_counter > 20000UL) { altcha_cancel(); return -1; }
+        memcpy(password, nonce, solver_nonce_len);
+        password[solver_nonce_len] = (unsigned char)(solver_counter >> 24);
+        password[solver_nonce_len + 1] = (unsigned char)(solver_counter >> 16);
+        password[solver_nonce_len + 2] = (unsigned char)(solver_counter >> 8);
+        password[solver_nonce_len + 3] = (unsigned char)solver_counter;
+        rc = mbedtls_pkcs5_pbkdf2_hmac(&solver_mdctx, password, pass_len,
+            salt, solver_salt_len, (unsigned int)solver_cost,
+            (uint32_t)solver_key_len, derived);
+        if (rc != 0) { altcha_cancel(); return -1; }
+        hex_encode(derived, solver_key_len, derived_hex);
+        if (has_prefix(derived_hex, prefix)) {
+            int n = snprintf(payload, sizeof(payload),
+                "{\\"challenge\\":%s,\\"solution\\":{\\"counter\\":%lu,\\"derivedKey\\":\\"%s\\"}}",
+                challenge, solver_counter, derived_hex);
+            if (n < 0 || (size_t)n >= sizeof(payload) ||
+                !b64_encode((const unsigned char *)payload, (size_t)n, token, token_size)) {
+                altcha_cancel(); return -1;
+            }
+            altcha_cancel();
+            memset(payload, 0, sizeof(payload));
+            return 1;
+        }
+        solver_counter++;
+        done++;
+    }
+    return 0;
 }
