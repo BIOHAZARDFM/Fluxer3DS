@@ -1468,7 +1468,7 @@ static void render_bottom(void) {
                 else { snprintf(label,sizeof(label),"%s",guild_items[idx-1].name); snprintf(symbol,sizeof(symbol),"C"); }
             } else if(screen_state==1) {
                 /* Channel rows use the familiar channel-type glyphs, not text labels. */
-                label[0]='\\0';
+                label[0]='\0';
                 switch(channel_items[idx].type) {
                     case 0: snprintf(symbol,sizeof(symbol),"#"); break;
                     case 2: snprintf(symbol,sizeof(symbol),"VC"); break;
