@@ -141,6 +141,7 @@ int altcha_solve(const char *error_json, char *token, size_t token_size) {
     size_t nonce_len = 0, salt_len = 0, key_len = 32;
     unsigned long cost = 0, counter;
     const mbedtls_md_info_t *md;
+    mbedtls_md_context_t mdctx;
     u64 start;
     int rc = 0;
 
@@ -165,6 +166,11 @@ int altcha_solve(const char *error_json, char *token, size_t token_size) {
 
     md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     if (!md) return 0;
+    mbedtls_md_init(&mdctx);
+    if (mbedtls_md_setup(&mdctx, md, 1) != 0) {
+        mbedtls_md_free(&mdctx);
+        return 0;
+    }
 
     start = osGetTime();
     for (counter = 0; counter <= 0xffffffffUL; ++counter) {
@@ -175,15 +181,27 @@ int altcha_solve(const char *error_json, char *token, size_t token_size) {
         password[nonce_len + 2] = (unsigned char)(counter >> 8);
         password[nonce_len + 3] = (unsigned char)counter;
 
-        rc = mbedtls_pkcs5_pbkdf2_hmac(md, password, pass_len, salt, salt_len,
+        rc = mbedtls_pkcs5_pbkdf2_hmac(&mdctx, password, pass_len, salt, salt_len,
                                        (unsigned int)cost, (uint32_t)key_len, derived);
-        if (rc != 0) return 0;
+        if (rc != 0) {
+            mbedtls_md_free(&mdctx);
+            memset(password, 0, sizeof(password));
+            return 0;
+        }
         hex_encode(derived, key_len, derived_hex);
         if (has_prefix(derived_hex, prefix)) break;
-        if ((counter & 31) == 0 && osGetTime() - start > 85000) return 0;
+        if ((counter & 31) == 0 && osGetTime() - start > 85000) {
+            mbedtls_md_free(&mdctx);
+            memset(password, 0, sizeof(password));
+            return 0;
+        }
     }
-    if (counter > 0xffffffffUL) return 0;
+    if (counter > 0xffffffffUL) {
+        mbedtls_md_free(&mdctx);
+        return 0;
+    }
 
+    mbedtls_md_free(&mdctx);
     if (snprintf(payload, sizeof(payload),
         "{\"challenge\":%s,\"solution\":{\"counter\":%lu,\"derivedKey\":\"%s\"}}",
         challenge, counter, derived_hex) >= (int)sizeof(payload)) return 0;
