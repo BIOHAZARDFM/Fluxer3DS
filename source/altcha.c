@@ -132,12 +132,14 @@ static int b64_encode(const unsigned char *src, size_t len, char *dst, size_t ca
 }
 
 int altcha_solve(const char *error_json, char *token, size_t token_size) {
-    char challenge[ALTCHA_MAX_CHALLENGE];
-    char params[2048];
-    char algorithm[64], nonce_hex[256], salt_hex[256], prefix[128], signature[512];
-    char derived_hex[ALTCHA_MAX_KEY * 2 + 1];
-    char payload[ALTCHA_MAX_CHALLENGE + 512];
-    unsigned char nonce[128], salt[128], password[132], derived[ALTCHA_MAX_KEY];
+    /* Keep large ALTCHA work buffers in static storage: the 3DS
+       default thread stack is too small for nested HTTPS + PBKDF2. */
+    static char challenge[ALTCHA_MAX_CHALLENGE];
+    static char params[2048];
+    static char algorithm[64], nonce_hex[256], salt_hex[256], prefix[128], signature[512];
+    static char derived_hex[ALTCHA_MAX_KEY * 2 + 1];
+    static char payload[ALTCHA_MAX_CHALLENGE + 512];
+    static unsigned char nonce[128], salt[128], password[132], derived[ALTCHA_MAX_KEY];
     size_t nonce_len = 0, salt_len = 0, key_len = 32;
     unsigned long cost = 0, counter;
     const mbedtls_md_info_t *md;
