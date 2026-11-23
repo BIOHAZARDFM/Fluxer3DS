@@ -276,8 +276,8 @@ static Result api_request(
     CURLcode cc;
     struct curl_slist *headers = NULL;
     char url[512];
-    char auth_header[TOKEN_MAX + 16];
-    char captcha_header[4200];
+    static char auth_header[TOKEN_MAX + 16];
+    static char captcha_header[4200];
     ResponseBuffer output;
     char curl_error[CURL_ERROR_SIZE];
     long status = 0;
@@ -563,7 +563,7 @@ static int accept_auth_response(
 
 static void verify_session(void)
 {
-    char response[HTTP_BODY_MAX];
+    static char response[HTTP_BODY_MAX];
     char name[96];
     char detail[128];
 
@@ -633,7 +633,7 @@ static void submit_password_login(void)
     char escaped_login[INPUT_MAX * 2];
     char escaped_password[INPUT_MAX * 2];
 
-    char response[HTTP_BODY_MAX];
+    static char response[HTTP_BODY_MAX];
     char detail[128];
 
     u32 http_status = 0;
@@ -777,7 +777,7 @@ cleanup:
 static void submit_mfa_code(void)
 {
     char code[128];
-    char response[HTTP_BODY_MAX];
+    static char response[HTTP_BODY_MAX];
     char detail[128];
 
     char body[512]
