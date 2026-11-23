@@ -11,6 +11,7 @@ jobs:
       image: devkitpro/devkitarm:20260610
 
     steps:
+    
       - name: Check out source
         uses: actions/checkout@v4
 
@@ -40,3 +41,11 @@ jobs:
             Fluxer3DS.elf
             Fluxer3DS.smdh
           if-no-files-found: error
+      - name: Show compiler configuration
+        run: |
+          echo "Checking header:"
+          ls -l "$DEVKITPRO/libctru/include/3ds.h"
+          echo "Compiler:"
+          which arm-none-eabi-gcc
+          echo "Compiler flags:"
+          make -n | head -40
