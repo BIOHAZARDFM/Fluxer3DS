@@ -52,6 +52,7 @@ CPPFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 SFILES   := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 
 export OFILES := $(CFILES:.c=.o) $(CPPFILES:.cpp=.o) $(SFILES:.s=.o)
+export LD := $(CC)
 
 export INCLUDE := -I$(CURDIR)/include \
                   -I$(CTRULIB)/include \
