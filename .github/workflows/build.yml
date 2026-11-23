@@ -31,7 +31,6 @@ jobs:
           test -n "$MAKEROM_PATH"
           chmod +x "$MAKEROM_PATH"
           echo "$(dirname "$MAKEROM_PATH")" >> "$GITHUB_PATH"
-          "$MAKEROM_PATH" -v
 
       - name: Find ARM toolchain and packaging tools
         run: |
