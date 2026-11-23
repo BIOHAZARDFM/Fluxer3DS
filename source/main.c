@@ -161,7 +161,7 @@ typedef struct {
     size_t used;
 } ResponseBuffer;
 
-static size_t curl_write_callback(
+static size_t fluxer_curl_write_callback(
     char *ptr, size_t size, size_t nmemb, void *userdata)
 {
     ResponseBuffer *buffer = (ResponseBuffer *)userdata;
@@ -337,7 +337,7 @@ static Result api_request(
 
     CURL_SETOPT(CURLOPT_URL, url);
     CURL_SETOPT(CURLOPT_HTTPHEADER, headers);
-    CURL_SETOPT(CURLOPT_WRITEFUNCTION, curl_write_callback);
+    CURL_SETOPT(CURLOPT_WRITEFUNCTION, fluxer_curl_write_callback);
     CURL_SETOPT(CURLOPT_WRITEDATA, &output);
     CURL_SETOPT(CURLOPT_USERAGENT, "Fluxer3DS/0.3");
     CURL_SETOPT(CURLOPT_NOSIGNAL, 1L);
@@ -682,8 +682,8 @@ static void submit_password_login(void)
     if (http_status == 400) {
         char error_code[96];
         char captcha_token[4096];
-        error_code[0] = '\\0';
-        captcha_token[0] = '\\0';
+        error_code[0] = '\0';
+        captcha_token[0] = '\0';
         json_string(response, "code", error_code, sizeof(error_code));
 
         if (strcmp(error_code, "CAPTCHA_REQUIRED") == 0 ||
