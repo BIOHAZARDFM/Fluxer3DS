@@ -50,8 +50,8 @@ jobs:
         run: |
           cxitool -n FLUXER3 -c CTR-H-FLXR -t 000400000F1A5300 \
             Fluxer3DS.3dsx Fluxer3DS.cxi
-          makerom -f cia -o Fluxer3DS.cia -target t \
-            -i Fluxer3DS.cxi:0:0
+          makerom -f cia -o Fluxer3DS.cia -DAPP_ENCRYPTED=false \
+            -rsf project.rsf -target t -i Fluxer3DS.cxi:0:0
           test -s Fluxer3DS.cia
 
       - name: Upload 3DSX and CIA
