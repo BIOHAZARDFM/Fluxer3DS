@@ -156,6 +156,10 @@ static int json_escape(const char *input,
 }
 
 
+static Result api_request(HTTPC_RequestMethod method,const char *path,const char *body,const char *auth_token,const char *captcha_token,char *response,size_t response_size,u32 *http_status,char *detail,size_t detail_size);
+static int keyboard_input(const char *hint,char *output,size_t output_size,int password_mode);
+static void load_home_data(void);
+
 /* ---------------- Fluxer chat browser ---------------- */
 #define MAX_ITEMS 64
 #define MAX_MESSAGES 18
