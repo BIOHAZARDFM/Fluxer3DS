@@ -187,11 +187,17 @@ static int json_int_value(const char *json,const char *key,int fallback) {
 }
 static int parse_items(const char *json,ChatItem *out,int max,int dm) {
     const char *p=strchr(json,'['); int count=0;
-    if(!p) return 0; p++;
+    if (!p)
+        return 0;
+    p++;
     while(*p && count<max) {
         if(*p=='{') {
             const char *end=object_end(p); char obj[4096]; size_t n;
-            if(!end) break; n=(size_t)(end-p); if(n>=sizeof(obj)) n=sizeof(obj)-1;
+            if (!end)
+                break;
+            n = (size_t)(end - p);
+            if (n >= sizeof(obj))
+                n = sizeof(obj) - 1;
             memcpy(obj,p,n); obj[n]='\0'; memset(&out[count],0,sizeof(out[count]));
             json_string(obj,"id",out[count].id,sizeof(out[count].id));
             json_string(obj,"name",out[count].name,sizeof(out[count].name));
@@ -238,7 +244,11 @@ static void load_messages(const char *channel_id,const char *name,int is_dm,int 
     while(p&&*p&&message_count<MAX_MESSAGES) {
         if(*p=='{') {
             const char *end=object_end(p); char obj[4096]; size_t n;
-            if(!end) break; n=(size_t)(end-p); if(n>=sizeof(obj)) n=sizeof(obj)-1;
+            if (!end)
+                break;
+            n = (size_t)(end - p);
+            if (n >= sizeof(obj))
+                n = sizeof(obj) - 1;
             memcpy(obj,p,n); obj[n]='\0'; memset(&message_items[message_count],0,sizeof(ChatMessage));
             json_string(obj,"content",message_items[message_count].content,sizeof(message_items[message_count].content));
             { const char *a=strstr(obj,"\"author\""); if(a) json_string(a,"username",message_items[message_count].author,sizeof(message_items[message_count].author)); }
