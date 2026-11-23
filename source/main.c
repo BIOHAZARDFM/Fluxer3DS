@@ -9,6 +9,10 @@
 #include <curl/curl.h>
 #include "altcha.h"
 
+static u32 theme_color(u8 r, u8 g, u8 b, u8 a);
+static int ui_theme_index = 0;
+static const char *ui_theme_names[] = {"AERO", "SUNSET", "LAVENDER", "MIDNIGHT"};
+
 #define API_BASE       "https://api.fluxer.app/v1"
 #define SOC_ALIGN      0x1000
 #define SOC_BUFFERSIZE 0x100000
@@ -16,14 +20,14 @@
 #define TOKEN_MAX      2048
 #define INPUT_MAX      384
 
-#define COL_BG       C2D_Color32(119, 202, 225, 255)
-#define COL_PANEL    C2D_Color32(225, 247, 251, 238)
-#define COL_PANEL2   C2D_Color32(176, 226, 239, 255)
-#define COL_ACCENT   C2D_Color32(35, 151, 190, 255)
-#define COL_TEXT     C2D_Color32(24, 65, 83, 255)
-#define COL_MUTED    C2D_Color32(72, 119, 137, 255)
-#define COL_GREEN    C2D_Color32(44, 151, 115, 255)
-#define COL_RED      C2D_Color32(190, 75, 75, 255)
+#define COL_BG       theme_color(119, 202, 225, 255)
+#define COL_PANEL    theme_color(225, 247, 251, 238)
+#define COL_PANEL2   theme_color(176, 226, 239, 255)
+#define COL_ACCENT   theme_color(35, 151, 190, 255)
+#define COL_TEXT     theme_color(24, 65, 83, 255)
+#define COL_MUTED    theme_color(72, 119, 137, 255)
+#define COL_GREEN    theme_color(44, 151, 115, 255)
+#define COL_RED      theme_color(190, 75, 75, 255)
 
 static u32 *soc_buffer = NULL;
 static int network_ready = 0;
@@ -50,6 +54,59 @@ static int app_state = 0;
 
 static C2D_Font ui_font;
 static C2D_TextBuf text_buffer;
+
+
+static u32 theme_color(u8 r, u8 g, u8 b, u8 a)
+{
+    int rr=r, gg=g, bb=b;
+    switch (ui_theme_index) {
+        case 1: /* Sunset: warm coral / peach */
+            rr = (rr * 220 + 255 * 35) / 255;
+            gg = (gg * 205 + 42 * 50) / 255;
+            bb = (bb * 175 + 24 * 80) / 255;
+            break;
+        case 2: /* Lavender: cool violet */
+            rr = (rr * 190 + 115 * 65) / 255;
+            gg = (gg * 185 + 105 * 70) / 255;
+            bb = (bb * 210 + 255 * 45) / 255;
+            break;
+        case 3: /* Midnight: dark blue interface */
+            rr = 28 + ((255 - rr) * 105) / 255;
+            gg = 38 + ((255 - gg) * 112) / 255;
+            bb = 58 + ((255 - bb) * 125) / 255;
+            break;
+        default: break; /* Original Frutiger Aero */
+    }
+    if (rr > 255) rr=255; if (gg > 255) gg=255; if (bb > 255) bb=255;
+    return C2D_Color32((u8)rr,(u8)gg,(u8)bb,a);
+}
+
+static void save_ui_theme(void)
+{
+    FILE *f;
+    mkdir("sdmc:/3ds",0777);
+    mkdir("sdmc:/3ds/Fluxer3DS",0777);
+    f=fopen("sdmc:/3ds/Fluxer3DS/theme.dat","wb");
+    if (!f) return;
+    fputc('0'+ui_theme_index,f);
+    fclose(f);
+}
+
+static void load_ui_theme(void)
+{
+    FILE *f=fopen("sdmc:/3ds/Fluxer3DS/theme.dat","rb");
+    int c;
+    if (!f) return;
+    c=fgetc(f);
+    fclose(f);
+    if (c>='0' && c<='3') ui_theme_index=c-'0';
+}
+
+static void cycle_ui_theme(int direction)
+{
+    ui_theme_index=(ui_theme_index+direction+4)%4;
+    save_ui_theme();
+}
 
 /* ---------------------------------------------------------
    GENERAL HELPERS
@@ -1281,42 +1338,42 @@ static void draw_aero_background(int width, int height) {
         int r= (u8)(116 + (t*48)/100);
         int g= (u8)(198 + (t*43)/100);
         int b= (u8)(226 + (t*25)/100);
-        C2D_DrawRectSolid(0,(float)y,0.5f,(float)width,12.5f,C2D_Color32(r,g,b,255));
+        C2D_DrawRectSolid(0,(float)y,0.5f,(float)width,12.5f,theme_color(r,g,b,255));
     }
     /* Subtle sky-glow bands. */
-    C2D_DrawRectSolid(0,0,0.4f,(float)width,3,C2D_Color32(255,255,255,100));
-    C2D_DrawRectSolid(0,(float)(height-5),0.4f,(float)width,5,C2D_Color32(25,111,151,35));
+    C2D_DrawRectSolid(0,0,0.4f,(float)width,3,theme_color(255,255,255,100));
+    C2D_DrawRectSolid(0,(float)(height-5),0.4f,(float)width,5,theme_color(25,111,151,35));
 }
 static void draw_aero_panel(float x,float y,float w,float h) {
-    C2D_DrawRectSolid(x+2,y+3,0.5f,w,h,C2D_Color32(20,91,119,55));
-    C2D_DrawRectSolid(x,y,0.4f,w,h,C2D_Color32(235,250,253,238));
-    C2D_DrawRectSolid(x+2,y+2,0.3f,w-4,h*0.43f,C2D_Color32(255,255,255,100));
-    C2D_DrawRectSolid(x+2,y+h-3,0.3f,w-4,1,C2D_Color32(255,255,255,180));
+    C2D_DrawRectSolid(x+2,y+3,0.5f,w,h,theme_color(20,91,119,55));
+    C2D_DrawRectSolid(x,y,0.4f,w,h,theme_color(235,250,253,238));
+    C2D_DrawRectSolid(x+2,y+2,0.3f,w-4,h*0.43f,theme_color(255,255,255,100));
+    C2D_DrawRectSolid(x+2,y+h-3,0.3f,w-4,1,theme_color(255,255,255,180));
 }
 static void draw_aero_button(float x,float y,float w,float h,const char *label,u32 base) {
-    C2D_DrawRectSolid(x+1,y+3,0.5f,w,h,C2D_Color32(15,83,115,75));
+    C2D_DrawRectSolid(x+1,y+3,0.5f,w,h,theme_color(15,83,115,75));
     C2D_DrawRectSolid(x,y,0.4f,w,h,base);
-    C2D_DrawRectSolid(x+2,y+2,0.3f,w-4,h*0.48f,C2D_Color32(255,255,255,85));
-    C2D_DrawRectSolid(x+2,y+h-3,0.3f,w-4,1,C2D_Color32(255,255,255,125));
-    draw_text(label,x+12,y+h*0.30f,0.40f,C2D_Color32(255,255,255,255));
+    C2D_DrawRectSolid(x+2,y+2,0.3f,w-4,h*0.48f,theme_color(255,255,255,85));
+    C2D_DrawRectSolid(x+2,y+h-3,0.3f,w-4,1,theme_color(255,255,255,125));
+    draw_text(label,x+12,y+h*0.30f,0.40f,theme_color(255,255,255,255));
 }
 static void draw_zip_cloth(float x,float y,float w,float h) {
     int i;
-    C2D_DrawRectSolid(x+3,y+4,0.5f,w,h,C2D_Color32(17,76,100,75));
-    C2D_DrawRectSolid(x,y,0.4f,w,h,C2D_Color32(54,137,157,255));
-    for(i=0;i<10;i++) C2D_DrawRectSolid(x+5,y+8+i*11,0.3f,w-10,1,C2D_Color32(130,196,205,55));
-    C2D_DrawRectSolid(x+5,y+5,0.2f,w-10,2,C2D_Color32(191,231,231,255));
-    C2D_DrawRectSolid(x+5,y+h-7,0.2f,w-10,2,C2D_Color32(25,91,111,255));
-    C2D_DrawRectSolid(x+6,y+6,0.2f,2,h-12,C2D_Color32(190,230,230,255));
-    C2D_DrawRectSolid(x+w-8,y+6,0.2f,2,h-12,C2D_Color32(25,91,111,255));
-    C2D_DrawRectSolid(x+12,y+h*0.70f,0.2f,w-24,7,C2D_Color32(28,88,107,255));
+    C2D_DrawRectSolid(x+3,y+4,0.5f,w,h,theme_color(17,76,100,75));
+    C2D_DrawRectSolid(x,y,0.4f,w,h,theme_color(54,137,157,255));
+    for(i=0;i<10;i++) C2D_DrawRectSolid(x+5,y+8+i*11,0.3f,w-10,1,theme_color(130,196,205,55));
+    C2D_DrawRectSolid(x+5,y+5,0.2f,w-10,2,theme_color(191,231,231,255));
+    C2D_DrawRectSolid(x+5,y+h-7,0.2f,w-10,2,theme_color(25,91,111,255));
+    C2D_DrawRectSolid(x+6,y+6,0.2f,2,h-12,theme_color(190,230,230,255));
+    C2D_DrawRectSolid(x+w-8,y+6,0.2f,2,h-12,theme_color(25,91,111,255));
+    C2D_DrawRectSolid(x+12,y+h*0.70f,0.2f,w-24,7,theme_color(28,88,107,255));
     for(i=0;i<(int)(w-32);i+=8) {
-        C2D_DrawRectSolid(x+16+i,y+h*0.70f,0.1f,4,3,C2D_Color32(222,240,235,255));
-        C2D_DrawRectSolid(x+20+i,y+h*0.70f+4,0.1f,4,3,C2D_Color32(116,169,178,255));
+        C2D_DrawRectSolid(x+16+i,y+h*0.70f,0.1f,4,3,theme_color(222,240,235,255));
+        C2D_DrawRectSolid(x+20+i,y+h*0.70f+4,0.1f,4,3,theme_color(116,169,178,255));
     }
-    C2D_DrawRectSolid(x+w*0.48f,y+h*0.70f-5,0.0f,18,17,C2D_Color32(218,231,226,255));
-    C2D_DrawRectSolid(x+w*0.48f+4,y+h*0.70f-2,0.0f,10,11,C2D_Color32(104,140,146,255));
-    C2D_DrawRectSolid(x+w*0.48f+8,y+h*0.70f+10,0.0f,3,10,C2D_Color32(218,231,226,255));
+    C2D_DrawRectSolid(x+w*0.48f,y+h*0.70f-5,0.0f,18,17,theme_color(218,231,226,255));
+    C2D_DrawRectSolid(x+w*0.48f+4,y+h*0.70f-2,0.0f,10,11,theme_color(104,140,146,255));
+    C2D_DrawRectSolid(x+w*0.48f+8,y+h*0.70f+10,0.0f,3,10,theme_color(218,231,226,255));
 }
 static void draw_unzip_overlay(void) {
     float t=(float)(osGetTime()-login_unzip_started)/850.0f;
@@ -1325,28 +1382,28 @@ static void draw_unzip_overlay(void) {
     if(t>=1.0f) { login_unzip_active=0; return; }
     if(t<0.0f)t=0.0f;
     shift=t*176.0f;
-    C2D_DrawRectSolid(-shift,0,0.05f,160,240,C2D_Color32(54,137,157,255));
-    C2D_DrawRectSolid(160+shift,0,0.05f,160,240,C2D_Color32(54,137,157,255));
+    C2D_DrawRectSolid(-shift,0,0.05f,160,240,theme_color(54,137,157,255));
+    C2D_DrawRectSolid(160+shift,0,0.05f,160,240,theme_color(54,137,157,255));
     for(i=0;i<18;i++) {
         float yy=(float)(i*14);
-        C2D_DrawRectSolid(-shift+5,yy,0.0f,150,1,C2D_Color32(160,211,216,90));
-        C2D_DrawRectSolid(165+shift,yy,0.0f,150,1,C2D_Color32(160,211,216,90));
+        C2D_DrawRectSolid(-shift+5,yy,0.0f,150,1,theme_color(160,211,216,90));
+        C2D_DrawRectSolid(165+shift,yy,0.0f,150,1,theme_color(160,211,216,90));
     }
     if(t<0.78f) {
         int alpha=(int)(255.0f*(1.0f-t/0.78f));
-        C2D_DrawRectSolid(157,0,0.0f,6,240,C2D_Color32(27,81,100,(u8)alpha));
-        for(i=4;i<236;i+=9) C2D_DrawRectSolid(157,(float)i,0.0f,6,4,C2D_Color32(229,239,229,(u8)alpha));
-        C2D_DrawRectSolid(151,118.0f-t*105.0f,0.0f,18,18,C2D_Color32(224,235,227,(u8)alpha));
+        C2D_DrawRectSolid(157,0,0.0f,6,240,theme_color(27,81,100,(u8)alpha));
+        for(i=4;i<236;i+=9) C2D_DrawRectSolid(157,(float)i,0.0f,6,4,theme_color(229,239,229,(u8)alpha));
+        C2D_DrawRectSolid(151,118.0f-t*105.0f,0.0f,18,18,theme_color(224,235,227,(u8)alpha));
     }
 }
 static void draw_aero_tile(float x,float y,float w,float h,const char *symbol,const char *name,int selected) {
-    u32 face=selected?C2D_Color32(58,169,205,255):C2D_Color32(225,247,251,245);
-    u32 ink=selected?C2D_Color32(255,255,255,255):COL_TEXT;
-    C2D_DrawRectSolid(x+2,y+3,0.5f,w,h,C2D_Color32(22,91,119,60));
+    u32 face=selected?theme_color(58,169,205,255):theme_color(225,247,251,245);
+    u32 ink=selected?theme_color(255,255,255,255):COL_TEXT;
+    C2D_DrawRectSolid(x+2,y+3,0.5f,w,h,theme_color(22,91,119,60));
     C2D_DrawRectSolid(x,y,0.4f,w,h,face);
-    C2D_DrawRectSolid(x+2,y+2,0.3f,w-4,h*0.40f,selected?C2D_Color32(255,255,255,75):C2D_Color32(255,255,255,125));
-    C2D_DrawRectSolid(x+7,y+7,0.2f,34,h-14,selected?C2D_Color32(24,126,162,255):C2D_Color32(151,216,231,255));
-    draw_text(symbol,x+14,y+15,0.43f,C2D_Color32(255,255,255,255));
+    C2D_DrawRectSolid(x+2,y+2,0.3f,w-4,h*0.40f,selected?theme_color(255,255,255,75):theme_color(255,255,255,125));
+    C2D_DrawRectSolid(x+7,y+7,0.2f,34,h-14,selected?theme_color(24,126,162,255):theme_color(151,216,231,255));
+    draw_text(symbol,x+14,y+15,0.43f,theme_color(255,255,255,255));
     draw_text(name,x+48,y+14,0.43f,ink);
 }
 static void render_bottom(void) {
@@ -1354,26 +1411,27 @@ static void render_bottom(void) {
     draw_aero_background(320,240);
     draw_aero_panel(0,0,320,34);
     draw_text("fluxer",12,5,0.68f,COL_TEXT);
-    draw_text("3DS",270,9,0.30f,COL_MUTED);
+    draw_text(ui_theme_names[ui_theme_index],218,9,0.34f,COL_TEXT);
+    draw_text("< L/R >",278,9,0.27f,COL_MUTED);
     if(app_state!=2) {
         if(app_state==0||app_state==3||app_state==4) {
             draw_zip_cloth(10,43,300,130);
-            draw_text("Welcome to Fluxer",22,51,0.60f,C2D_Color32(247,255,255,255));
-            draw_text("Sign in to your real account.",22,82,0.42f,C2D_Color32(220,244,246,255));
-            draw_text(status_text,22,113,0.27f,app_state==3?C2D_Color32(255,211,211,255):C2D_Color32(231,250,250,255));
-            draw_aero_button(10,185,300,45,app_state==4?"Verifying security check...":"Sign in with email and password",app_state==4?C2D_Color32(92,165,184,255):COL_ACCENT);
+            draw_text("Welcome to Fluxer",22,51,0.60f,theme_color(247,255,255,255));
+            draw_text("Sign in to your real account.",22,82,0.42f,theme_color(220,244,246,255));
+            draw_text(status_text,22,113,0.27f,app_state==3?theme_color(255,211,211,255):theme_color(231,250,250,255));
+            draw_aero_button(10,185,300,45,app_state==4?"Verifying security check...":"Sign in with email and password",app_state==4?theme_color(92,165,184,255):COL_ACCENT);
         } else if(app_state==1) {
             draw_zip_cloth(10,43,300,130);
-            draw_text("Two-factor authentication",22,51,0.50f,C2D_Color32(247,255,255,255));
-            draw_text("Use your authenticator app",22,82,0.41f,C2D_Color32(220,244,246,255));
-            draw_text(status_text,22,120,0.28f,C2D_Color32(224,255,239,255));
+            draw_text("Two-factor authentication",22,51,0.50f,theme_color(247,255,255,255));
+            draw_text("Use your authenticator app",22,82,0.41f,theme_color(220,244,246,255));
+            draw_text(status_text,22,120,0.28f,theme_color(224,255,239,255));
             draw_aero_button(10,185,300,45,"Enter verification code",COL_ACCENT);
         }
         return;
     }
     if(screen_state==0||screen_state==1||screen_state==3) {
         int total=screen_state==0?guild_count+1:(screen_state==1?channel_count:friend_count);
-        draw_text(screen_state==0?"YOUR COMMUNITIES":(screen_state==1?"COMMUNITY CHANNELS":"FRIENDS"),12,38,0.39f,C2D_Color32(255,255,255,255));
+        draw_text(screen_state==0?"YOUR COMMUNITIES":(screen_state==1?"COMMUNITY CHANNELS":"FRIENDS"),12,38,0.39f,theme_color(255,255,255,255));
         for(i=0;i<6&&list_offset+i<total;i++) {
             int idx=list_offset+i,col=i%2,row=i/2; float x=8+col*154,y=61+row*55; char label[72],symbol[8];
             if(screen_state==0) {
@@ -1385,12 +1443,12 @@ static void render_bottom(void) {
             } else { snprintf(label,sizeof(label),"%s",friend_items[idx].name); snprintf(symbol,sizeof(symbol),"@"); }
             draw_aero_tile(x,y,146,48,symbol,label,idx==selected_index);
         }
-        draw_text("D-pad: move   A: open   B: back",10,224,0.29f,C2D_Color32(255,255,255,255));
+        draw_text("D-pad: move   A: open   B: back   L/R: theme",10,224,0.26f,theme_color(255,255,255,255));
         draw_aero_button(264,216,22,20,"^",COL_ACCENT);
         draw_aero_button(289,216,22,20,"v",COL_ACCENT);
     } else if(screen_state==2) {
         static const char *faces[]={":)",":(",":D",";)","<3",":P","xD",":O"};
-        draw_text("MESSAGE COMPOSER",12,40,0.39f,C2D_Color32(255,255,255,255));
+        draw_text("MESSAGE COMPOSER",12,40,0.39f,theme_color(255,255,255,255));
         if(emoji_panel_open) {
             for(i=0;i<8;i++) { int col=i%4,row=i/4; float x=8+col*78,y=66+row*46; draw_aero_button(x,y,72,38,faces[i],COL_ACCENT); }
         } else {
@@ -1398,18 +1456,18 @@ static void render_bottom(void) {
             draw_text("Draft:",16,72,0.37f,COL_MUTED);
             draw_text(message_draft[0]?message_draft:"Your message will appear here.",16,98,0.40f,message_draft[0]?COL_TEXT:COL_MUTED);
         }
-        draw_aero_button(8,174,174,38,"KEYBOARD",C2D_Color32(74,164,194,255));
+        draw_aero_button(8,174,174,38,"KEYBOARD",theme_color(74,164,194,255));
         draw_aero_button(188,174,40,38,":)",COL_ACCENT);
         draw_aero_button(232,174,80,38,"SEND",COL_GREEN);
-        draw_text("B: back     X: emoji panel",10,222,0.26f,C2D_Color32(255,255,255,255));
+        draw_text("B: back     X: emoji panel",10,222,0.26f,theme_color(255,255,255,255));
     }
     if(transition_active) {
         float t=(float)(osGetTime()-transition_started)/320.0f; float size,alpha;
         if(t>1.0f)t=1.0f;
         size=40.0f+280.0f*t; alpha=255.0f*(1.0f-t);
-        C2D_DrawRectSolid(0,0,0.1f,320,240,C2D_Color32(12,64,87,(u8)alpha));
-        C2D_DrawRectSolid(160-size/2,120-size/2,0.0f,size,size,C2D_Color32(58,169,205,(u8)alpha));
-        if(pending_guild_index>=0&&pending_guild_index<guild_count) draw_text(guild_items[pending_guild_index].name,160-size*0.42f,112,0.44f,C2D_Color32(255,255,255,(u8)alpha));
+        C2D_DrawRectSolid(0,0,0.1f,320,240,theme_color(12,64,87,(u8)alpha));
+        C2D_DrawRectSolid(160-size/2,120-size/2,0.0f,size,size,theme_color(58,169,205,(u8)alpha));
+        if(pending_guild_index>=0&&pending_guild_index<guild_count) draw_text(guild_items[pending_guild_index].name,160-size*0.42f,112,0.44f,theme_color(255,255,255,(u8)alpha));
     }
     if(login_unzip_active) draw_unzip_overlay();
 }
@@ -1426,13 +1484,13 @@ static void render_top(void) {
             draw_text(message_items[idx].author,17,y+2,0.40f,COL_ACCENT);
             draw_text(message_items[idx].content,116,y+3,0.39f,COL_TEXT);
         }
-        draw_text(home_status,14,190,0.34f,C2D_Color32(255,255,255,255));
-        draw_text("UP/DOWN: history   B: return to tiles",14,213,0.36f,C2D_Color32(255,255,255,255));
+        draw_text(home_status,14,190,0.34f,theme_color(255,255,255,255));
+        draw_text("UP/DOWN: history   B: return to tiles",14,213,0.36f,theme_color(255,255,255,255));
     } else if(app_state==2) {
         draw_aero_panel(14,12,372,212);
         draw_text("FLUXER",28,25,0.86f,COL_TEXT);
         draw_text("A little place for your communities.",30,67,0.46f,COL_MUTED);
-        C2D_DrawRectSolid(30,98,0.5f,340,2,C2D_Color32(117,190,207,255));
+        C2D_DrawRectSolid(30,98,0.5f,340,2,theme_color(117,190,207,255));
         draw_text(account_name,30,116,0.48f,COL_GREEN);
         if(screen_state==0) { draw_text("Choose Friends to open your friend tiles,",30,155,0.42f,COL_TEXT); draw_text("or choose a community to browse its channels.",30,183,0.42f,COL_TEXT); }
         else if(screen_state==1) { draw_text("Community channels",30,155,0.48f,COL_TEXT); draw_text(home_status,30,185,0.38f,COL_MUTED); }
@@ -1441,7 +1499,7 @@ static void render_top(void) {
         draw_aero_panel(22,14,356,210);
         draw_text("FLUXER 3DS",38,29,0.8f,COL_TEXT);
         draw_text("A lightweight third-party client",38,68,0.42f,COL_MUTED);
-        C2D_DrawRectSolid(38,103,0.5f,324,2,C2D_Color32(117,190,207,255));
+        C2D_DrawRectSolid(38,103,0.5f,324,2,theme_color(117,190,207,255));
         draw_text("Fluxer account sign-in",38,124,0.48f,COL_TEXT);
         draw_text("Official Fluxer API  |  HTTPS",38,157,0.38f,COL_MUTED);
         draw_text("No calls or video features",38,187,0.34f,COL_MUTED);
@@ -1469,6 +1527,8 @@ int main(int argc, char *argv[])
     C3D_RenderTarget *bottom =
         C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 
+    load_ui_theme();
+
     ui_font = C2D_FontLoadSystem(CFG_REGION_USA);
     text_buffer = C2D_TextBufNew(4096);
 
@@ -1492,11 +1552,18 @@ int main(int argc, char *argv[])
 
         u32 down = hidKeysDown();
 
+        /* Shoulder buttons cycle the visual theme without leaving the chat. */
+        if (app_state == 2 && (down & KEY_L)) cycle_ui_theme(-1);
+        if (app_state == 2 && (down & KEY_R)) cycle_ui_theme(1);
+
         touchPosition touch;
         int touched=0,tile_touched=0,tile_index=-1;
         int composer_keyboard=0,composer_emoji=0,composer_send=0;
         if(down&KEY_TOUCH) {
             hidTouchRead(&touch);
+            if (app_state == 2 && touch.py < 34 && touch.px >= 210) {
+                cycle_ui_theme(touch.px < 265 ? -1 : 1);
+            }
             touched=touch.px>=10&&touch.px<=310&&touch.py>=185&&touch.py<=230;
             if(app_state==2&&screen_state!=2&&touch.py>=61&&touch.py<214&&touch.px>=8&&touch.px<=312) {
                 int col=touch.px<160?0:1,row=(touch.py-61)/55;
