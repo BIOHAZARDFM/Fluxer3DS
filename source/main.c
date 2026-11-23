@@ -34,6 +34,9 @@ static char status_text[256] =
     "Connect to Wi-Fi, then sign in.";
 
 static char mfa_ticket[256];
+static char pending_login_body[INPUT_MAX * 4 + 128];
+static char pending_captcha_token[4096];
+static char captcha_retry_response[HTTP_BODY_MAX];
 
 static int app_state = 0;
 /*
@@ -715,35 +718,22 @@ static void submit_password_login(void)
 
     if (http_status == 400) {
         char error_code[96];
-        char captcha_token[4096];
         error_code[0] = '\0';
-        captcha_token[0] = '\0';
         json_string(response, "code", error_code, sizeof(error_code));
-
         if (strcmp(error_code, "CAPTCHA_REQUIRED") == 0 ||
             strcmp(error_code, "INVALID_CAPTCHA") == 0) {
+            if (!altcha_begin(response)) {
+                snprintf(status_text, sizeof(status_text),
+                         "Could not read Fluxer's CAPTCHA challenge.");
+                app_state = 3;
+                goto cleanup;
+            }
+            snprintf(pending_login_body, sizeof(pending_login_body), "%s", body);
+            memset(pending_captcha_token, 0, sizeof(pending_captcha_token));
             snprintf(status_text, sizeof(status_text),
-                     "Solving Fluxer security check...");
-            if (!altcha_solve(response, captcha_token, sizeof(captcha_token))) {
-                snprintf(status_text, sizeof(status_text),
-                         "Could not solve this CAPTCHA challenge.");
-                app_state = 3;
-                memset(captcha_token, 0, sizeof(captcha_token));
-                goto cleanup;
-            }
-
-            rc = api_request(
-                HTTPC_METHOD_POST, "/auth/login", body, NULL,
-                captcha_token, response, sizeof(response),
-                &http_status, detail, sizeof(detail));
-
-            memset(captcha_token, 0, sizeof(captcha_token));
-            if (R_FAILED(rc)) {
-                snprintf(status_text, sizeof(status_text),
-                         "CAPTCHA retry failed: %.90s", detail);
-                app_state = 3;
-                goto cleanup;
-            }
+                     "Security check started. Please wait...");
+            app_state = 4;
+            goto cleanup;
         }
     }
 
@@ -903,7 +893,7 @@ static void render_bottom(void)
     draw_text("fluxer", 14, 7, 0.68f, COL_TEXT);
     draw_text("3DS", 265, 9, 0.40f, COL_MUTED);
 
-    if (app_state == 0 || app_state == 3) {
+    if (app_state == 0 || app_state == 3 || app_state == 4) {
         C2D_DrawRectSolid(
             10, 43, 0.5f, 300, 130, COL_PANEL);
 
@@ -922,8 +912,8 @@ static void render_bottom(void)
 
         draw_button(
             10, 185, 300, 45,
-            "Sign in with email and password",
-            COL_ACCENT);
+            app_state == 4 ? "Verifying security check..." : "Sign in with email and password",
+            app_state == 4 ? COL_PANEL2 : COL_ACCENT);
     }
     else if (app_state == 1) {
         C2D_DrawRectSolid(
@@ -1049,6 +1039,41 @@ int main(int argc, char *argv[])
 
         if (down & KEY_START)
             break;
+
+        if (app_state == 4) {
+            int solved = altcha_step(2, pending_captcha_token, sizeof(pending_captcha_token));
+            if (solved == 0) {
+                if ((altcha_progress() & 31UL) == 0)
+                    snprintf(status_text, sizeof(status_text), "Verifying CAPTCHA... %lu attempts", altcha_progress());
+            } else if (solved < 0) {
+                snprintf(status_text, sizeof(status_text), "CAPTCHA could not be solved. Please try again.");
+                app_state = 3;
+                memset(pending_login_body, 0, sizeof(pending_login_body));
+            } else {
+                u32 captcha_status = 0;
+                char captcha_detail[128];
+                snprintf(status_text, sizeof(status_text), "Security check complete. Signing in...");
+                Result captcha_rc = api_request(HTTPC_METHOD_POST, "/auth/login",
+                    pending_login_body, NULL, pending_captcha_token,
+                    captcha_retry_response, sizeof(captcha_retry_response),
+                    &captcha_status, captcha_detail, sizeof(captcha_detail));
+                memset(pending_captcha_token, 0, sizeof(pending_captcha_token));
+                memset(pending_login_body, 0, sizeof(pending_login_body));
+                if (R_FAILED(captcha_rc)) {
+                    snprintf(status_text, sizeof(status_text), "CAPTCHA retry failed: %.90s", captcha_detail);
+                    app_state = 3;
+                } else if (captcha_status != 200) {
+                    show_api_error(captcha_status, captcha_retry_response);
+                } else {
+                    int auth_result = accept_auth_response(captcha_retry_response);
+                    if (auth_result == 1) verify_session();
+                    else if (auth_result != 2) {
+                        snprintf(status_text, sizeof(status_text), "Unexpected response after CAPTCHA.");
+                        app_state = 3;
+                    }
+                }
+            }
+        }
 
         if ((app_state == 0 || app_state == 3) &&
             ((down & KEY_A) || touched)) {
