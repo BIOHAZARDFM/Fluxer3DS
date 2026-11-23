@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
+#include <sys/stat.h>
 #include <curl/curl.h>
 #include "altcha.h"
 
@@ -29,6 +30,7 @@ static int network_ready = 0;
 static int sslc_ready = 0;
 
 static char session_token[TOKEN_MAX];
+static int session_loaded_from_disk = 0;
 static char account_name[96] = "Not signed in";
 static char status_text[256] =
     "Connect to Wi-Fi, then sign in.";
@@ -159,6 +161,9 @@ static int json_escape(const char *input,
 static Result api_request(HTTPC_RequestMethod method,const char *path,const char *body,const char *auth_token,const char *captcha_token,char *response,size_t response_size,u32 *http_status,char *detail,size_t detail_size);
 static int keyboard_input(const char *hint,char *output,size_t output_size,int password_mode);
 static void load_home_data(void);
+static int save_session_token(void);
+static int load_session_token(void);
+static void delete_saved_session(void);
 
 /* ---------------- Fluxer chat browser ---------------- */
 #define MAX_ITEMS 64
@@ -706,6 +711,56 @@ static int accept_auth_response(
     return 0;
 }
 
+#define SESSION_DIR "sdmc:/3ds/Fluxer3DS"
+#define SESSION_FILE SESSION_DIR "/session.dat"
+
+static void delete_saved_session(void)
+{
+    remove(SESSION_FILE);
+}
+
+static int save_session_token(void)
+{
+    FILE *file;
+    size_t len;
+    if (!session_token[0]) return 0;
+    len = strlen(session_token);
+    if (len == 0 || len >= TOKEN_MAX || strchr(session_token, '\\n') || strchr(session_token, '\\r')) return 0;
+    mkdir("sdmc:/3ds", 0777);
+    mkdir(SESSION_DIR, 0777);
+    file = fopen(SESSION_FILE, "wb");
+    if (!file) return 0;
+    if (fwrite(session_token, 1, len, file) != len) {
+        fclose(file);
+        delete_saved_session();
+        return 0;
+    }
+    if (fclose(file) != 0) {
+        delete_saved_session();
+        return 0;
+    }
+    return 1;
+}
+
+static int load_session_token(void)
+{
+    FILE *file = fopen(SESSION_FILE, "rb");
+    size_t len;
+    int extra;
+    if (!file) return 0;
+    len = fread(session_token, 1, sizeof(session_token) - 1, file);
+    extra = fgetc(file);
+    fclose(file);
+    session_token[len] = '\\0';
+    if (len == 0 || extra != EOF || strchr(session_token, '\\n') || strchr(session_token, '\\r')) {
+        memset(session_token, 0, sizeof(session_token));
+        delete_saved_session();
+        return 0;
+    }
+    session_loaded_from_disk = 1;
+    return 1;
+}
+
 static void verify_session(void)
 {
     static char response[HTTP_BODY_MAX];
@@ -738,6 +793,7 @@ static void verify_session(void)
     }
 
     if (http_status != 200) {
+        if (http_status == 401 || http_status == 403) delete_saved_session();
         memset(session_token, 0, sizeof(session_token));
 
         snprintf(status_text, sizeof(status_text),
@@ -764,8 +820,10 @@ static void verify_session(void)
     snprintf(account_name, sizeof(account_name),
              "%s", name);
 
-    snprintf(status_text, sizeof(status_text),
-             "Your Fluxer session is verified.");
+    if (save_session_token())
+        snprintf(status_text, sizeof(status_text), "Signed in. Login saved on SD card.");
+    else
+        snprintf(status_text, sizeof(status_text), "Signed in, but could not save login to SD card.");
 
     app_state = 2;
     load_home_data();
@@ -1111,7 +1169,7 @@ static void render_top(void)
 
     if(app_state==2) {
         draw_text(account_name,22,105,0.48f,COL_GREEN); draw_text(home_status,22,136,0.34f,COL_MUTED);
-        if(screen_state==0) draw_text("UP/DOWN select  A open  START exit",22,174,0.40f,COL_TEXT);
+        if(screen_state==0) draw_text("UP/DOWN select  A open  X logout  START exit",22,174,0.40f,COL_TEXT);
         else if(screen_state==1) draw_text("A open channel   B back",22,174,0.40f,COL_TEXT);
         else draw_text("UP/DOWN scroll  A send  B back",22,174,0.40f,COL_TEXT);
     } else {
@@ -1153,6 +1211,11 @@ int main(int argc, char *argv[])
                  (unsigned long)network_rc);
 
         app_state = 3;
+    } else if (load_session_token()) {
+        snprintf(status_text, sizeof(status_text), "Restoring saved Fluxer session...");
+        verify_session();
+        if (app_state != 2 && session_loaded_from_disk && !session_token[0])
+            session_loaded_from_disk = 0;
     }
 
     while (aptMainLoop()) {
@@ -1223,7 +1286,17 @@ int main(int argc, char *argv[])
         }
         else if(app_state==2) {
             int total=screen_state==0?dm_count+guild_count:(screen_state==1?channel_count:message_count);
-            if(down&KEY_B) { if(screen_state==2) { screen_state=active_is_dm?0:1; selected_index=active_channel; list_offset=0; } else if(screen_state==1) { screen_state=0; selected_index=dm_count+active_guild; list_offset=0; } }
+            if (down & KEY_X) {
+                delete_saved_session();
+                memset(session_token, 0, sizeof(session_token));
+                memset(account_name, 0, sizeof(account_name));
+                snprintf(account_name, sizeof(account_name), "Not signed in");
+                dm_count = guild_count = channel_count = message_count = 0;
+                screen_state = 0; selected_index = 0; list_offset = 0;
+                app_state = 0;
+                snprintf(status_text, sizeof(status_text), "Logged out. Saved session deleted.");
+            }
+            else if(down&KEY_B) { if(screen_state==2) { screen_state=active_is_dm?0:1; selected_index=active_channel; list_offset=0; } else if(screen_state==1) { screen_state=0; selected_index=dm_count+active_guild; list_offset=0; } }
             else if(down&KEY_DOWN) { if(total>0&&selected_index<total-1) selected_index++; if(selected_index>=list_offset+5) list_offset=selected_index-4; }
             else if(down&KEY_UP) { if(selected_index>0) selected_index--; if(selected_index<list_offset) list_offset=selected_index; }
             else if(down&KEY_A) {
