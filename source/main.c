@@ -725,7 +725,7 @@ static int save_session_token(void)
     size_t len;
     if (!session_token[0]) return 0;
     len = strlen(session_token);
-    if (len == 0 || len >= TOKEN_MAX || strchr(session_token, '\\n') || strchr(session_token, '\\r')) return 0;
+    if (len == 0 || len >= TOKEN_MAX || strchr(session_token, '\n') || strchr(session_token, '\r')) return 0;
     mkdir("sdmc:/3ds", 0777);
     mkdir(SESSION_DIR, 0777);
     file = fopen(SESSION_FILE, "wb");
@@ -751,8 +751,8 @@ static int load_session_token(void)
     len = fread(session_token, 1, sizeof(session_token) - 1, file);
     extra = fgetc(file);
     fclose(file);
-    session_token[len] = '\\0';
-    if (len == 0 || extra != EOF || strchr(session_token, '\\n') || strchr(session_token, '\\r')) {
+    session_token[len] = '\0';
+    if (len == 0 || extra != EOF || strchr(session_token, '\n') || strchr(session_token, '\r')) {
         memset(session_token, 0, sizeof(session_token));
         delete_saved_session();
         return 0;
