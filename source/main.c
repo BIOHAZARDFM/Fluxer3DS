@@ -202,10 +202,16 @@ static int parse_items(const char *json,ChatItem *out,int max,int dm) {
             json_string(obj,"id",out[count].id,sizeof(out[count].id));
             json_string(obj,"name",out[count].name,sizeof(out[count].name));
             out[count].type=json_int_value(obj,"type",0);
-            if(dm && !out[count].name[0]) {
+            if(dm) {
                 const char *r=strstr(obj,"\"recipients\"");
-                if(r) json_string(r,"username",out[count].name,sizeof(out[count].name));
-                if(!out[count].name[0]) snprintf(out[count].name,sizeof(out[count].name),"Direct message");
+                char display_name[72]={0};
+                /* Prefer the visible profile name over the @username. */
+                if(r && !json_string(r,"global_name",display_name,sizeof(display_name)))
+                    json_string(r,"username",display_name,sizeof(display_name));
+                if(display_name[0])
+                    snprintf(out[count].name,sizeof(out[count].name),"%s",display_name);
+                if(!out[count].name[0])
+                    snprintf(out[count].name,sizeof(out[count].name),"Direct message");
             }
             if(out[count].id[0]) count++;
             p=end;
@@ -269,7 +275,7 @@ static void load_messages(const char *channel_id,const char *name,int is_dm,int 
                 n = sizeof(obj) - 1;
             memcpy(obj,p,n); obj[n]='\0'; memset(&message_items[message_count],0,sizeof(ChatMessage));
             json_string(obj,"content",message_items[message_count].content,sizeof(message_items[message_count].content));
-            { const char *a=strstr(obj,"\"author\""); if(a) json_string(a,"username",message_items[message_count].author,sizeof(message_items[message_count].author)); }
+            { const char *a=strstr(obj,"\"author\""); if(a && !json_string(a,"global_name",message_items[message_count].author,sizeof(message_items[message_count].author))) json_string(a,"username",message_items[message_count].author,sizeof(message_items[message_count].author)); }
             if(!message_items[message_count].author[0]) snprintf(message_items[message_count].author,sizeof(message_items[message_count].author),"User");
             message_count++; p=end;
         } else p++;
