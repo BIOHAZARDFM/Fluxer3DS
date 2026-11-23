@@ -1372,16 +1372,24 @@ static void draw_aero_background(int width, int height) {
     C2D_DrawRectSolid(0,(float)(height-5),0.4f,(float)width,5,theme_color(25,111,151,35));
 }
 static void draw_aero_panel(float x,float y,float w,float h) {
-    C2D_DrawRectSolid(x+2,y+3,0.5f,w,h,theme_color(20,91,119,55));
-    C2D_DrawRectSolid(x,y,0.4f,w,h,theme_color(235,250,253,238));
-    C2D_DrawRectSolid(x+2,y+2,0.3f,w-4,h*0.43f,theme_color(255,255,255,100));
-    C2D_DrawRectSolid(x+2,y+h-3,0.3f,w-4,1,theme_color(255,255,255,180));
+    /* Layered shadow, pale bevel and glass highlight give panels a little lift. */
+    C2D_DrawRectSolid(x+3,y+5,0.55f,w,h,theme_color(16,73,105,72));
+    C2D_DrawRectSolid(x+1,y+2,0.48f,w,h,theme_color(103,174,194,105));
+    C2D_DrawRectSolid(x,y,0.40f,w,h,theme_color(235,250,253,245));
+    C2D_DrawRectSolid(x+2,y+2,0.30f,w-4,h*0.38f,theme_color(255,255,255,125));
+    C2D_DrawRectSolid(x+2,y+2,0.25f,w-4,1,theme_color(255,255,255,220));
+    C2D_DrawRectSolid(x+2,y+2,0.25f,1,h-4,theme_color(255,255,255,175));
+    C2D_DrawRectSolid(x+2,y+h-3,0.30f,w-4,1,theme_color(105,169,190,100));
 }
 static void draw_aero_button(float x,float y,float w,float h,const char *label,u32 base) {
-    C2D_DrawRectSolid(x+1,y+3,0.5f,w,h,theme_color(15,83,115,75));
-    C2D_DrawRectSolid(x,y,0.4f,w,h,base);
-    C2D_DrawRectSolid(x+2,y+2,0.3f,w-4,h*0.48f,theme_color(255,255,255,85));
-    C2D_DrawRectSolid(x+2,y+h-3,0.3f,w-4,1,theme_color(255,255,255,125));
+    /* A visible lower extrusion plus a bright top bevel makes it feel raised. */
+    C2D_DrawRectSolid(x+3,y+5,0.55f,w,h,theme_color(12,69,101,95));
+    C2D_DrawRectSolid(x+1,y+2,0.48f,w,h,theme_color(79,151,177,145));
+    C2D_DrawRectSolid(x,y,0.40f,w,h,base);
+    C2D_DrawRectSolid(x+2,y+2,0.30f,w-4,h*0.43f,theme_color(255,255,255,105));
+    C2D_DrawRectSolid(x+2,y+2,0.25f,w-4,1,theme_color(255,255,255,220));
+    C2D_DrawRectSolid(x+2,y+2,0.25f,1,h-4,theme_color(255,255,255,150));
+    C2D_DrawRectSolid(x+2,y+h-3,0.30f,w-4,1,theme_color(16,83,116,105));
     draw_text(label,x+12,y+h*0.30f,0.40f,theme_color(255,255,255,255));
 }
 static void draw_zip_cloth(float x,float y,float w,float h) {
@@ -1424,12 +1432,21 @@ static void draw_unzip_overlay(void) {
     }
 }
 static void draw_aero_tile(float x,float y,float w,float h,const char *symbol,const char *name,int selected) {
-    u32 face=selected?theme_color(58,169,205,255):theme_color(225,247,251,245);
+    u32 face=selected?theme_color(58,169,205,255):theme_color(225,247,251,248);
     u32 ink=selected?theme_color(255,255,255,255):COL_TEXT;
-    C2D_DrawRectSolid(x+2,y+3,0.5f,w,h,theme_color(22,91,119,60));
-    C2D_DrawRectSolid(x,y,0.4f,w,h,face);
-    C2D_DrawRectSolid(x+2,y+2,0.3f,w-4,h*0.40f,selected?theme_color(255,255,255,75):theme_color(255,255,255,125));
-    C2D_DrawRectSolid(x+7,y+7,0.2f,34,h-14,selected?theme_color(24,126,162,255):theme_color(151,216,231,255));
+    /* Soft cast shadow and two offset bevel layers create a raised glass tile. */
+    C2D_DrawRectSolid(x+4,y+6,0.58f,w,h,theme_color(12,67,96,95));
+    C2D_DrawRectSolid(x+2,y+3,0.50f,w,h,theme_color(88,163,188,155));
+    C2D_DrawRectSolid(x,y,0.40f,w,h,face);
+    C2D_DrawRectSolid(x+2,y+2,0.30f,w-4,h*0.42f,selected?theme_color(255,255,255,95):theme_color(255,255,255,155));
+    /* Bright top/left bevel and darker lower/right bevel simulate thickness. */
+    C2D_DrawRectSolid(x+2,y+2,0.24f,w-4,1,theme_color(255,255,255,230));
+    C2D_DrawRectSolid(x+2,y+2,0.24f,1,h-4,theme_color(255,255,255,185));
+    C2D_DrawRectSolid(x+2,y+h-3,0.24f,w-4,1,theme_color(34,103,132,125));
+    C2D_DrawRectSolid(x+w-3,y+3,0.24f,1,h-6,theme_color(44,112,139,85));
+    /* Recessed icon well, with its own tiny highlight. */
+    C2D_DrawRectSolid(x+7,y+8,0.22f,34,h-16,theme_color(28,105,139,selected?220:75));
+    C2D_DrawRectSolid(x+9,y+9,0.18f,30,2,theme_color(255,255,255,selected?110:185));
     draw_text(symbol,x+14,y+15,0.43f,theme_color(255,255,255,255));
     draw_text(name,x+48,y+14,0.43f,ink);
 }
