@@ -168,12 +168,19 @@ static void delete_saved_session(void);
 /* ---------------- Fluxer chat browser ---------------- */
 #define MAX_ITEMS 64
 #define MAX_MESSAGES 50
-typedef struct { char id[32]; char name[72]; int type; } ChatItem;
+typedef struct { char id[32]; char name[72]; char peer_id[32]; int type; } ChatItem;
 typedef struct { char author[48]; char content[240]; } ChatMessage;
+typedef struct { char id[32]; char name[72]; int dm_index; } FriendItem;
 static ChatItem dm_items[MAX_ITEMS], guild_items[MAX_ITEMS], channel_items[MAX_ITEMS];
+static FriendItem friend_items[MAX_ITEMS];
 static ChatMessage message_items[MAX_MESSAGES];
-static int dm_count=0,guild_count=0,channel_count=0,message_count=0;
+static int dm_count=0,guild_count=0,channel_count=0,message_count=0,friend_count=0;
 static int screen_state=0,selected_index=0,list_offset=0,active_guild=0,active_channel=0,active_is_dm=0;
+static int chat_return_screen=0,chat_return_selection=0;
+static int transition_active=0,pending_guild_index=-1;
+static u64 transition_started=0;
+static int emoji_panel_open=0;
+static char message_draft[INPUT_MAX]="";
 static char home_status[160]="Loading Fluxer chats...",selected_channel_name[72]="";
 
 static const char *object_end(const char *p) {
