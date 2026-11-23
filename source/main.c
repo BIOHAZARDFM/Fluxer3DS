@@ -1506,7 +1506,8 @@ static void render_top(void) {
         draw_text(account_name,30,116,0.48f,COL_GREEN);
         if(screen_state==0) { draw_text("Choose Friends to open your friend tiles,",30,155,0.42f,COL_TEXT); draw_text("or choose a community to browse its channels.",30,183,0.42f,COL_TEXT); }
         else if(screen_state==1) { draw_text("Community channels",30,155,0.48f,COL_TEXT); draw_text(home_status,30,185,0.38f,COL_MUTED); }
-        else { draw_text("Your friends",30,155,0.48f,COL_TEXT); draw_text(home_status,30,185,0.38f,COL_MUTED); }
+        else if(screen_state==3) { draw_text("Your friends",30,155,0.48f,COL_TEXT); draw_text(home_status,30,185,0.38f,COL_MUTED); }
+        else { draw_text("Interface settings",30,155,0.48f,COL_TEXT); draw_text("Select a theme on the lower screen.",30,185,0.38f,COL_MUTED); }
     } else {
         draw_aero_panel(22,14,356,210);
         draw_text("FLUXER 3DS",38,29,0.8f,COL_TEXT);
