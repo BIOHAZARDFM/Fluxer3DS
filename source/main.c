@@ -26,6 +26,7 @@
 
 static u32 *soc_buffer = NULL;
 static int network_ready = 0;
+static int sslc_ready = 0;
 
 static char session_token[TOKEN_MAX];
 static char account_name[96] = "Not signed in";
@@ -214,9 +215,19 @@ static Result init_network(void)
     }
 
     /*
-       devkitPro's 3DS curl port uses libctru's socket service
-       and mbedTLS for modern HTTPS/TLS.
+       mbedTLS in devkitPro's 3DS port obtains secure random bytes
+       through the 3DS SSL service. Start it before any TLS request.
     */
+    rc = sslcInit(0);
+    if (R_FAILED(rc)) {
+        socExit();
+        free(soc_buffer);
+        soc_buffer = NULL;
+        return rc;
+    }
+    sslc_ready = 1;
+
+    /* libcurl uses libctru sockets and mbedTLS on the 3DS. */
     if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
         socExit();
         free(soc_buffer);
@@ -233,6 +244,11 @@ static void cleanup_network(void)
     if (network_ready) {
         curl_global_cleanup();
         network_ready = 0;
+    }
+
+    if (sslc_ready) {
+        sslcExit();
+        sslc_ready = 0;
     }
 
     if (soc_buffer) {
@@ -261,7 +277,10 @@ static Result api_request(
     char auth_header[TOKEN_MAX + 16];
     char captcha_header[4200];
     ResponseBuffer output;
+    char curl_error[CURL_ERROR_SIZE];
     long status = 0;
+    long os_error = 0;
+    long verify_result = 0;
     Result result = -1;
 
     if (detail && detail_size)
@@ -282,6 +301,7 @@ static Result api_request(
     output.data = response;
     output.capacity = response_size;
     output.used = 0;
+    curl_error[0] = '\0';
 
     easy = curl_easy_init();
     if (!easy) {
@@ -339,7 +359,9 @@ static Result api_request(
     CURL_SETOPT(CURLOPT_HTTPHEADER, headers);
     CURL_SETOPT(CURLOPT_WRITEFUNCTION, fluxer_curl_write_callback);
     CURL_SETOPT(CURLOPT_WRITEDATA, &output);
-    CURL_SETOPT(CURLOPT_USERAGENT, "Fluxer3DS/0.3");
+    CURL_SETOPT(CURLOPT_USERAGENT, "Fluxer3DS/0.4");
+    CURL_SETOPT(CURLOPT_ERRORBUFFER, curl_error);
+    CURL_SETOPT(CURLOPT_CAINFO, "sdmc:/config/ssl/cacert.pem");
     CURL_SETOPT(CURLOPT_NOSIGNAL, 1L);
     CURL_SETOPT(CURLOPT_CONNECTTIMEOUT, 25L);
     CURL_SETOPT(CURLOPT_TIMEOUT, 75L);
@@ -361,9 +383,19 @@ static Result api_request(
 
     cc = curl_easy_perform(easy);
     if (cc != CURLE_OK) {
-        if (detail && detail_size)
-            snprintf(detail, detail_size, "HTTPS request: %s",
-                     curl_easy_strerror(cc));
+        curl_easy_getinfo(easy, CURLINFO_OS_ERRNO, &os_error);
+        curl_easy_getinfo(easy, CURLINFO_SSL_VERIFYRESULT, &verify_result);
+        if (detail && detail_size) {
+            if (curl_error[0])
+                snprintf(detail, detail_size,
+                         "HTTPS: %.72s (curl %d, OS %ld, cert %ld)",
+                         curl_error, (int)cc, os_error, verify_result);
+            else
+                snprintf(detail, detail_size,
+                         "HTTPS: %s (curl %d, OS %ld, cert %ld)",
+                         curl_easy_strerror(cc), (int)cc,
+                         os_error, verify_result);
+        }
         goto done;
     }
 
