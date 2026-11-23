@@ -37,7 +37,7 @@ ASFLAGS  := -g $(ARCH)
 LDFLAGS := -specs=3dsx.specs -g $(ARCH)
 
 # Libraries
-LIBS    := -lcitro2d -lcitro3d -lctru -lm
+LIBS    := -lcitro2d -lcitro3d -lctru -lmbedcrypto -lm
 LIBDIRS := $(CTRULIB) $(PORTLIBS)
 
 # Parent build process
