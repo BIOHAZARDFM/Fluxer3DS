@@ -162,7 +162,7 @@ static void load_home_data(void);
 
 /* ---------------- Fluxer chat browser ---------------- */
 #define MAX_ITEMS 64
-#define MAX_MESSAGES 18
+#define MAX_MESSAGES 50
 typedef struct { char id[32]; char name[72]; int type; } ChatItem;
 typedef struct { char author[48]; char content[240]; } ChatMessage;
 static ChatItem dm_items[MAX_ITEMS], guild_items[MAX_ITEMS], channel_items[MAX_ITEMS];
@@ -237,7 +237,7 @@ static void load_guild_channels(int index) {
 }
 static void load_messages(const char *channel_id,const char *name,int is_dm,int index) {
     static char response[HTTP_BODY_MAX]; char path[128],detail[128]; u32 code=0; const char *p;
-    snprintf(path,sizeof(path),"/channels/%s/messages?limit=18",channel_id);
+    snprintf(path,sizeof(path),"/channels/%s/messages?limit=50",channel_id);
     Result rc=api_request(HTTPC_METHOD_GET,path,NULL,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
     if(R_FAILED(rc)||code!=200) { snprintf(home_status,sizeof(home_status),"Messages failed: HTTP %lu",(unsigned long)code); return; }
     message_count=0; p=strchr(response,'['); if(p) p++;
@@ -256,7 +256,7 @@ static void load_messages(const char *channel_id,const char *name,int is_dm,int 
             message_count++; p=end;
         } else p++;
     }
-    active_channel=index; active_is_dm=is_dm; screen_state=2; selected_index=0; list_offset=0;
+    active_channel=index; active_is_dm=is_dm; screen_state=2; selected_index=message_count>0?message_count-1:0; list_offset=message_count>5?message_count-5:0;
     snprintf(selected_channel_name,sizeof(selected_channel_name),"%s",name);
     snprintf(home_status,sizeof(home_status),"%d recent messages",message_count);
 }
@@ -1060,13 +1060,13 @@ static void render_bottom(void)
         if(screen_state==0) {
             count=dm_count+guild_count; draw_text("DIRECT MESSAGES / SERVERS",12,43,0.32f,COL_MUTED);
             for(i=0;i<5&&i+list_offset<count;i++) { int idx=i+list_offset; float y=65+i*34; const char *name=idx<dm_count?dm_items[idx].name:guild_items[idx-dm_count].name;
-                C2D_DrawRectSolid(8,y,0.5f,304,30,idx==selected_index?COL_ACCENT:COL_PANEL); draw_text(idx<dm_count?"@":"#",14,y+7,0.30f,COL_MUTED); draw_text(name,32,y+7,0.34f,COL_TEXT); }
+                C2D_DrawRectSolid(8,y,0.5f,304,30,idx==selected_index?COL_ACCENT:COL_PANEL); draw_text(idx<dm_count?"@":"#",14,y+6,0.36f,COL_MUTED); draw_text(name,32,y+5,0.42f,COL_TEXT); }
         } else if(screen_state==1) {
             draw_text("CHANNELS",12,43,0.34f,COL_MUTED);
-            for(i=0;i<5&&i+list_offset<channel_count;i++) { int idx=i+list_offset; float y=65+i*34; C2D_DrawRectSolid(8,y,0.5f,304,30,idx==selected_index?COL_ACCENT:COL_PANEL); draw_text("#",14,y+7,0.30f,COL_MUTED); draw_text(channel_items[idx].name,32,y+7,0.34f,COL_TEXT); }
+            for(i=0;i<5&&i+list_offset<channel_count;i++) { int idx=i+list_offset; float y=65+i*34; C2D_DrawRectSolid(8,y,0.5f,304,30,idx==selected_index?COL_ACCENT:COL_PANEL); draw_text("#",14,y+6,0.36f,COL_MUTED); draw_text(channel_items[idx].name,32,y+5,0.42f,COL_TEXT); }
         } else {
-            draw_text(selected_channel_name,12,43,0.36f,COL_TEXT);
-            for(i=0;i<5&&i+list_offset<message_count;i++) { int idx=message_count-1-(i+list_offset); float y=65+i*34; C2D_DrawRectSolid(8,y,0.5f,304,30,COL_PANEL); draw_text(message_items[idx].author,14,y+2,0.26f,COL_ACCENT); draw_text(message_items[idx].content,14,y+15,0.25f,COL_TEXT); }
+            draw_text(selected_channel_name,12,43,0.43f,COL_TEXT);
+            for(i=0;i<5&&i+list_offset<message_count;i++) { int idx=message_count-1-(i+list_offset); float y=65+i*34; C2D_DrawRectSolid(8,y,0.5f,304,30,COL_PANEL); draw_text(message_items[idx].author,14,y+1,0.34f,COL_ACCENT); draw_text(message_items[idx].content,14,y+15,0.33f,COL_TEXT); }
             draw_button(8,210,304,28,"A: Send message",COL_ACCENT);
         }
     }
@@ -1087,9 +1087,9 @@ static void render_top(void)
 
     if(app_state==2) {
         draw_text(account_name,22,105,0.48f,COL_GREEN); draw_text(home_status,22,136,0.34f,COL_MUTED);
-        if(screen_state==0) draw_text("UP/DOWN select  A open  START exit",22,174,0.34f,COL_TEXT);
-        else if(screen_state==1) draw_text("A open channel   B back",22,174,0.34f,COL_TEXT);
-        else draw_text("A send message   B back",22,174,0.34f,COL_TEXT);
+        if(screen_state==0) draw_text("UP/DOWN select  A open  START exit",22,174,0.40f,COL_TEXT);
+        else if(screen_state==1) draw_text("A open channel   B back",22,174,0.40f,COL_TEXT);
+        else draw_text("UP/DOWN scroll  A send  B back",22,174,0.40f,COL_TEXT);
     } else {
         draw_text("Fluxer account sign-in",22,112,0.48f,COL_TEXT);
         draw_text("Official Fluxer API  |  HTTPS",22,145,0.38f,COL_MUTED);
