@@ -9,19 +9,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: devkitpro/devkitarm:latest
+      image: devkitpro/devkitarm:20260610
 
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Update package database
-        run: dkp-pacman -Syu --noconfirm
-
-      - name: Install 3DS libraries
+      - name: Verify 3DS libraries
         run: |
-          dkp-pacman -S --noconfirm libctru citro3d citro2d
           test -f "$DEVKITPRO/libctru/include/3ds.h"
+          echo "3DS headers found!"
 
       - name: Compile
         run: make
