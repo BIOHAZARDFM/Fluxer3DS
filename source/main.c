@@ -76,10 +76,10 @@ static u32 theme_color(u8 r, u8 g, u8 b, u8 a)
             gg = (gg * 185 + 105 * 70) / 255;
             bb = (bb * 210 + 255 * 45) / 255;
             break;
-        case 3: /* Midnight: dark blue interface */
-            rr = 28 + ((255 - rr) * 105) / 255;
-            gg = 38 + ((255 - gg) * 112) / 255;
-            bb = 58 + ((255 - bb) * 125) / 255;
+        case 3: /* Midnight: brighter ocean-blue, not near-black */
+            rr = 70 + (rr * 150) / 255;
+            gg = 112 + (gg * 132) / 255;
+            bb = 150 + (bb * 105) / 255;
             break;
         default: break; /* Original Frutiger Aero */
     }
@@ -87,9 +87,10 @@ static u32 theme_color(u8 r, u8 g, u8 b, u8 a)
     if (gg > 255) gg=255;
     if (bb > 255) bb=255;
     if (ui_dark_mode) {
-        rr = 18 + (rr * 82) / 255;
-        gg = 25 + (gg * 86) / 255;
-        bb = 38 + (bb * 100) / 255;
+        /* Keep dark mode readable and colourful rather than crushing it to black. */
+        rr = 48 + (rr * 105) / 255;
+        gg = 55 + (gg * 108) / 255;
+        bb = 68 + (bb * 112) / 255;
     }
     return C2D_Color32((u8)rr,(u8)gg,(u8)bb,a);
 }
@@ -209,8 +210,8 @@ static int json_string(const char *json, const char *key,
                 unsigned int first;
                 p++;
                 if (strlen(p) < 4 || (first = read_json_u16(p)) == 0xFFFFFFFFu) {
-                    if (!truncated && n + 1 < out_size) out[n++] = '?';
-                    else truncated = 1;
+                    /* Ignore malformed/unsupported escape sequences. */
+                    p += strlen(p);
                     break;
                 }
                 p += 4;
@@ -222,7 +223,10 @@ static int json_string(const char *json, const char *key,
                         cp = 0x10000 + ((first - 0xD800) << 10) + (second - 0xDC00);
                         p += 6;
                     } else cp = '?';
-                } else if (first >= 0xD800 && first <= 0xDFFF) cp = '?';
+                } else if (first >= 0xD800 && first <= 0xDFFF) {
+                    /* Unsupported surrogate: omit it rather than showing '?'. */
+                    continue;
+                }
                 if (!truncated) {
                     size_t before = n;
                     append_utf8_codepoint(out, out_size, &n, cp);
@@ -309,6 +313,7 @@ static ChatItem dm_items[MAX_ITEMS], guild_items[MAX_ITEMS], channel_items[MAX_I
 static FriendItem friend_items[MAX_ITEMS];
 static ChatMessage message_items[MAX_MESSAGES];
 static int dm_count=0,guild_count=0,channel_count=0,message_count=0,friend_count=0;
+static int circle_scroll_latch=0;
 static int screen_state=0,selected_index=0,list_offset=0,active_guild=0,active_channel=0,active_is_dm=0;
 static int chat_return_screen=0,chat_return_selection=0;
 static int settings_return_screen=0;
@@ -1302,7 +1307,7 @@ static void draw_text(
                  ((unsigned char)value[in+3] & 0x3F);
             bytes = 4;
         } else {
-            safe_text[out++] = '?';
+            /* Skip malformed UTF-8 bytes instead of displaying replacement marks. */
             in++;
             continue;
         }
@@ -1341,7 +1346,8 @@ static void draw_text(
             case 0x00E6: safe_text[out++] = 'a'; safe_text[out++] = 'e'; break;
             case 0x0152: safe_text[out++] = 'O'; safe_text[out++] = 'E'; break;
             case 0x0153: safe_text[out++] = 'o'; safe_text[out++] = 'e'; break;
-            default: safe_text[out++] = '?'; break;
+            /* Unsupported glyphs (emoji, CJK, symbols) are omitted cleanly. */
+            default: break;
         }
     }
     safe_text[out] = '\0';
@@ -1461,8 +1467,17 @@ static void render_bottom(void) {
                 if(idx==0) { snprintf(label,sizeof(label),"Friends"); snprintf(symbol,sizeof(symbol),"F"); }
                 else { snprintf(label,sizeof(label),"%s",guild_items[idx-1].name); snprintf(symbol,sizeof(symbol),"C"); }
             } else if(screen_state==1) {
-                snprintf(label,sizeof(label),"%s",channel_items[idx].name);
-                snprintf(symbol,sizeof(symbol),"%s",channel_items[idx].type==4?"DIR":(channel_items[idx].type==2?"VC":"#"));
+                /* Channel rows use the familiar channel-type glyphs, not text labels. */
+                label[0]='\\0';
+                switch(channel_items[idx].type) {
+                    case 0: snprintf(symbol,sizeof(symbol),"#"); break;
+                    case 2: snprintf(symbol,sizeof(symbol),"VC"); break;
+                    case 4: snprintf(symbol,sizeof(symbol),"DIR"); break;
+                    case 5: snprintf(symbol,sizeof(symbol),"ANN"); break;
+                    case 15: snprintf(symbol,sizeof(symbol),"FOR"); break;
+                    case 16: snprintf(symbol,sizeof(symbol),"MED"); break;
+                    default: snprintf(symbol,sizeof(symbol),"CH"); break;
+                }
             } else { snprintf(label,sizeof(label),"%s",friend_items[idx].name); snprintf(symbol,sizeof(symbol),"@"); }
             draw_aero_tile(x,y,146,48,symbol,label,idx==selected_index);
         }
@@ -1604,6 +1619,17 @@ int main(int argc, char *argv[])
         if(app_state==2 && (screen_state==2||screen_state==5)) {
             cursor_x += ((float)circle.dx / 156.0f) * 5.0f;
             cursor_y -= ((float)circle.dy / 156.0f) * 5.0f;
+            /* Up on the Circle Pad means older messages (larger offset). */
+            if(circle.dy > 60 && circle_scroll_latch != 1) {
+                int max_scroll=message_count>5?message_count-5:0;
+                if(list_offset<max_scroll) list_offset++;
+                circle_scroll_latch=1;
+            } else if(circle.dy < -60 && circle_scroll_latch != -1) {
+                if(list_offset>0) list_offset--;
+                circle_scroll_latch=-1;
+            } else if(circle.dy > -20 && circle.dy < 20) {
+                circle_scroll_latch=0;
+            }
             if(cursor_x<4) cursor_x=4;
             if(cursor_x>396) cursor_x=396;
             if(cursor_y<4) cursor_y=4;
@@ -1810,7 +1836,7 @@ int main(int argc, char *argv[])
                     }
                 }
             } else if(message_count>0) {
-                int max_scroll=message_count>7?message_count-7:0;
+                int max_scroll=message_count>5?message_count-5:0;
                 if(down&KEY_UP) { if(list_offset<max_scroll)list_offset++; }
                 else if(down&KEY_DOWN) { if(list_offset>0)list_offset--; }
                 selected_index=list_offset;
