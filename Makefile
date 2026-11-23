@@ -1,4 +1,3 @@
-
 .SUFFIXES:
 
 ifeq ($(strip $(DEVKITPRO)),)
@@ -33,8 +32,8 @@ CFLAGS += $(INCLUDE) -D__3DS__
 CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
 ASFLAGS  := -g $(ARCH)
 
-# Linker flags
-LDFLAGS := -specs=3dsx.specs -g $(ARCH) -Wl,--defsym=__stacksize__=0x80000
+# Linker flags. Keep the standard devkitARM 3DSX linker setup.
+LDFLAGS := -specs=3dsx.specs -g $(ARCH)
 
 # Libraries
 LIBS    := -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lz -lcitro2d -lcitro3d -lctru -lm
