@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
+#include "altcha.h"
 
 #define API_BASE       "https://api.fluxer.app/v1"
 #define SOC_ALIGN      0x1000
@@ -245,6 +246,7 @@ static Result api_request(
     const char *path,
     const char *body,
     const char *auth_token,
+    const char *captcha_token,
     char *response,
     size_t response_size,
     u32 *http_status,
@@ -314,6 +316,14 @@ static Result api_request(
         set_error(detail, detail_size,
                   "User-Agent header", rc);
         goto done;
+    }
+
+    if (captcha_token && captcha_token[0]) {
+        rc = httpcAddRequestHeaderField(&ctx, "X-Captcha-Token", captcha_token);
+        if (R_FAILED(rc)) {
+            set_error(detail, detail_size, "CAPTCHA header", rc);
+            goto done;
+        }
     }
 
     if (auth_token && auth_token[0]) {
@@ -551,6 +561,7 @@ static void verify_session(void)
         "/users/@me",
         NULL,
         session_token,
+        NULL,
         response,
         sizeof(response),
         &http_status,
@@ -674,6 +685,7 @@ static void submit_password_login(void)
         "/auth/login",
         body,
         NULL,
+        NULL,
         response,
         sizeof(response),
         &http_status,
@@ -686,6 +698,40 @@ static void submit_password_login(void)
                  "Login request failed: %.110s", detail);
         app_state = 3;
         goto cleanup;
+    }
+
+    if (http_status == 400) {
+        char error_code[96];
+        char captcha_token[4096];
+        error_code[0] = '\\0';
+        captcha_token[0] = '\\0';
+        json_string(response, "code", error_code, sizeof(error_code));
+
+        if (strcmp(error_code, "CAPTCHA_REQUIRED") == 0 ||
+            strcmp(error_code, "INVALID_CAPTCHA") == 0) {
+            snprintf(status_text, sizeof(status_text),
+                     "Solving Fluxer security check...");
+            if (!altcha_solve(response, captcha_token, sizeof(captcha_token))) {
+                snprintf(status_text, sizeof(status_text),
+                         "Could not solve this CAPTCHA challenge.");
+                app_state = 3;
+                memset(captcha_token, 0, sizeof(captcha_token));
+                goto cleanup;
+            }
+
+            rc = api_request(
+                HTTPC_METHOD_POST, "/auth/login", body, NULL,
+                captcha_token, response, sizeof(response),
+                &http_status, detail, sizeof(detail));
+
+            memset(captcha_token, 0, sizeof(captcha_token));
+            if (R_FAILED(rc)) {
+                snprintf(status_text, sizeof(status_text),
+                         "CAPTCHA retry failed: %.90s", detail);
+                app_state = 3;
+                goto cleanup;
+            }
+        }
     }
 
     if (http_status != 200) {
@@ -758,6 +804,7 @@ static void submit_mfa_code(void)
         HTTPC_METHOD_POST,
         "/auth/login/mfa/totp",
         body,
+        NULL,
         NULL,
         response,
         sizeof(response),
