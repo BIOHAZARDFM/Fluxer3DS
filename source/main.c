@@ -229,11 +229,29 @@ static void load_guild_channels(int index) {
     if(index<0||index>=guild_count) return;
     snprintf(path,sizeof(path),"/guilds/%s/channels",guild_items[index].id);
     Result rc=api_request(HTTPC_METHOD_GET,path,NULL,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
-    if(R_FAILED(rc)||code!=200) { snprintf(home_status,sizeof(home_status),"Channels failed: HTTP %lu",(unsigned long)code); return; }
+    if(R_FAILED(rc)||code!=200) {
+        snprintf(home_status,sizeof(home_status),"Channels failed: HTTP %lu %.70s",(unsigned long)code,detail);
+        return;
+    }
     channel_count=parse_items(response,channel_items,MAX_ITEMS,0);
-    for(i=0;i<channel_count;i++) if(channel_items[i].type==0||channel_items[i].type==5) channel_items[n++]=channel_items[i];
-    channel_count=n; active_guild=index; screen_state=1; selected_index=0; list_offset=0;
-    snprintf(home_status,sizeof(home_status),"%d text channels",channel_count);
+    {
+        int raw_count=channel_count;
+        for(i=0;i<raw_count;i++) {
+            int type=channel_items[i].type;
+            /* Keep categories, text, voice, announcement, forum and media entries visible. */
+            if(type==0||type==2||type==4||type==5||type==15||type==16)
+                channel_items[n++]=channel_items[i];
+        }
+        channel_count=n;
+        active_guild=index;
+        screen_state=1;
+        selected_index=0;
+        list_offset=0;
+        if(channel_count==0)
+            snprintf(home_status,sizeof(home_status),"No supported channels (API returned %d)",raw_count);
+        else
+            snprintf(home_status,sizeof(home_status),"%d channels and categories",channel_count);
+    }
 }
 static void load_messages(const char *channel_id,const char *name,int is_dm,int index) {
     static char response[HTTP_BODY_MAX]; char path[128],detail[128]; u32 code=0; const char *p;
@@ -1063,7 +1081,7 @@ static void render_bottom(void)
                 C2D_DrawRectSolid(8,y,0.5f,304,30,idx==selected_index?COL_ACCENT:COL_PANEL); draw_text(idx<dm_count?"@":"#",14,y+6,0.36f,COL_MUTED); draw_text(name,32,y+5,0.42f,COL_TEXT); }
         } else if(screen_state==1) {
             draw_text("CHANNELS",12,43,0.34f,COL_MUTED);
-            for(i=0;i<5&&i+list_offset<channel_count;i++) { int idx=i+list_offset; float y=65+i*34; C2D_DrawRectSolid(8,y,0.5f,304,30,idx==selected_index?COL_ACCENT:COL_PANEL); draw_text("#",14,y+6,0.36f,COL_MUTED); draw_text(channel_items[idx].name,32,y+5,0.42f,COL_TEXT); }
+            for(i=0;i<5&&i+list_offset<channel_count;i++) { int idx=i+list_offset; float y=65+i*34; C2D_DrawRectSolid(8,y,0.5f,304,30,idx==selected_index?COL_ACCENT:COL_PANEL); draw_text(channel_items[idx].type==4?"v":(channel_items[idx].type==2?"~":"#"),14,y+6,0.36f,COL_MUTED); draw_text(channel_items[idx].name,32,y+5,0.42f,COL_TEXT); }
         } else {
             draw_text(selected_channel_name,12,43,0.43f,COL_TEXT);
             for(i=0;i<5&&i+list_offset<message_count;i++) { int idx=message_count-1-(i+list_offset); float y=65+i*34; C2D_DrawRectSolid(8,y,0.5f,304,30,COL_PANEL); draw_text(message_items[idx].author,14,y+1,0.34f,COL_ACCENT); draw_text(message_items[idx].content,14,y+15,0.33f,COL_TEXT); }
@@ -1204,7 +1222,12 @@ int main(int argc, char *argv[])
             else if(down&KEY_UP) { if(selected_index>0) selected_index--; if(selected_index<list_offset) list_offset=selected_index; }
             else if(down&KEY_A) {
                 if(screen_state==0) { if(selected_index<dm_count) load_messages(dm_items[selected_index].id,dm_items[selected_index].name,1,selected_index); else { int gi=selected_index-dm_count; if(gi>=0&&gi<guild_count) load_guild_channels(gi); } }
-                else if(screen_state==1&&selected_index<channel_count) load_messages(channel_items[selected_index].id,channel_items[selected_index].name,0,selected_index);
+                else if(screen_state==1&&selected_index<channel_count) {
+                    int type=channel_items[selected_index].type;
+                    if(type==4) snprintf(home_status,sizeof(home_status),"Category: channels are shown in this list");
+                    else if(type==15||type==16) snprintf(home_status,sizeof(home_status),"Forum/media view is not supported yet");
+                    else load_messages(channel_items[selected_index].id,channel_items[selected_index].name,0,selected_index);
+                }
                 else if(screen_state==2) send_chat_message();
             }
         }
