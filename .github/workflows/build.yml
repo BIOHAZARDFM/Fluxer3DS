@@ -34,6 +34,7 @@ jobs:
 
       - name: Find ARM toolchain and packaging tools
         run: |
+          export PATH="$DEVKITPRO/devkitARM/bin:$DEVKITPRO/tools/bin:$PATH"
           echo "DEVKITPRO=$DEVKITPRO"
           echo "DEVKITARM=$DEVKITARM"
           command -v arm-none-eabi-gcc
