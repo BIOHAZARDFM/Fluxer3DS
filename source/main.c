@@ -1412,8 +1412,10 @@ static void render_bottom(void) {
     draw_aero_background(320,240);
     draw_aero_panel(0,0,320,34);
     draw_text("fluxer",12,5,0.68f,COL_TEXT);
-    draw_text(ui_theme_names[ui_theme_index],218,9,0.34f,COL_TEXT);
-    draw_text("< L/R >",278,9,0.27f,COL_MUTED);
+    draw_text(ui_theme_names[ui_theme_index],155,9,0.34f,COL_TEXT);
+    draw_text("< L/R >",210,9,0.27f,COL_MUTED);
+    if(app_state==2)
+        draw_aero_button(230,37,82,23,screen_state==4?"BACK":"SETTINGS",theme_color(104,112,184,255));
     if(app_state!=2) {
         if(app_state==0||app_state==3||app_state==4) {
             draw_zip_cloth(10,43,300,130);
@@ -1447,6 +1449,15 @@ static void render_bottom(void) {
         draw_text("D-pad: move   A: open   B: back   L/R: theme",10,224,0.26f,theme_color(255,255,255,255));
         draw_aero_button(264,216,22,20,"^",COL_ACCENT);
         draw_aero_button(289,216,22,20,"v",COL_ACCENT);
+    } else if(screen_state==4) {
+        int ti;
+        draw_text("SETTINGS",14,68,0.62f,theme_color(255,255,255,255));
+        draw_text("Choose an interface theme",14,91,0.39f,COL_TEXT);
+        for(ti=0;ti<4;ti++) {
+            draw_aero_button(14,116+ti*27,292,23,ui_theme_names[ti],
+                ti==ui_theme_index?COL_GREEN:theme_color(74,150,183,255));
+        }
+        draw_text("Tap a theme or use L/R to switch.",14,229,0.31f,COL_TEXT);
     } else if(screen_state==2) {
         static const char *faces[]={":)",":(",":D",";)","<3",":P","xD",":O"};
         draw_text("MESSAGE COMPOSER",12,40,0.39f,theme_color(255,255,255,255));
@@ -1559,11 +1570,14 @@ int main(int argc, char *argv[])
 
         touchPosition touch;
         int touched=0,tile_touched=0,tile_index=-1;
-        int composer_keyboard=0,composer_emoji=0,composer_send=0;
+        int composer_keyboard=0,composer_emoji=0,composer_send=0;\n        int settings_touched=0,settings_theme_touch=-1;
         if(down&KEY_TOUCH) {
             hidTouchRead(&touch);
-            if (app_state == 2 && touch.py < 34 && touch.px >= 210) {
-                cycle_ui_theme(touch.px < 265 ? -1 : 1);
+            if(app_state==2 && touch.py>=36 && touch.py<=60 && touch.px>=230 && touch.px<=314)
+                settings_touched=1;
+            if(app_state==2 && screen_state==4 && touch.py>=116 && touch.py<224 && touch.px>=14 && touch.px<=306) {
+                settings_theme_touch=(touch.py-116)/27;
+                if(settings_theme_touch<0 || settings_theme_touch>3) settings_theme_touch=-1;
             }
             touched=touch.px>=10&&touch.px<=310&&touch.py>=185&&touch.py<=230;
             if(app_state==2&&screen_state!=2&&touch.py>=61&&touch.py<214&&touch.px>=8&&touch.px<=312) {
@@ -1638,7 +1652,16 @@ int main(int argc, char *argv[])
         }
         else if(app_state==2) {
             int total=screen_state==0?guild_count+1:(screen_state==1?channel_count:(screen_state==3?friend_count:message_count));
-            if(down&KEY_X) {
+            if(settings_touched) {
+                if(screen_state==4) { screen_state=chat_return_screen; }
+                else { chat_return_screen=screen_state; screen_state=4; selected_index=ui_theme_index; }
+            } else if(screen_state==4) {
+                if(settings_theme_touch>=0) { ui_theme_index=settings_theme_touch; save_ui_theme(); selected_index=ui_theme_index; }
+                else if(down&KEY_B) { screen_state=chat_return_screen; }
+                else if(down&KEY_UP) { selected_index=(selected_index+3)%4; }
+                else if(down&KEY_DOWN) { selected_index=(selected_index+1)%4; }
+                else if(down&KEY_A) { ui_theme_index=selected_index; save_ui_theme(); }
+            } else if(down&KEY_X) {
                 if(screen_state==2) emoji_panel_open=!emoji_panel_open;
                 else {
                     delete_saved_session(); memset(session_token,0,sizeof(session_token)); memset(account_name,0,sizeof(account_name));
