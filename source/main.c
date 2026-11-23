@@ -1212,25 +1212,25 @@ static void draw_aero_tile(float x,float y,float w,float h,const char *symbol,co
     C2D_DrawRectSolid(x+2,y+2,0.3f,w-4,h*0.40f,selected?C2D_Color32(255,255,255,75):C2D_Color32(255,255,255,125));
     C2D_DrawRectSolid(x+7,y+7,0.2f,34,h-14,selected?C2D_Color32(24,126,162,255):C2D_Color32(151,216,231,255));
     draw_text(symbol,x+14,y+15,0.43f,C2D_Color32(255,255,255,255));
-    draw_text(name,x+48,y+17,0.35f,ink);
+    draw_text(name,x+48,y+14,0.43f,ink);
 }
 static void render_bottom(void) {
     int i;
     draw_aero_background(320,240);
     draw_aero_panel(0,0,320,34);
-    draw_text("fluxer",12,7,0.62f,COL_TEXT);
+    draw_text("fluxer",12,5,0.68f,COL_TEXT);
     draw_text("3DS",270,9,0.30f,COL_MUTED);
     if(app_state!=2) {
         if(app_state==0||app_state==3||app_state==4) {
             draw_zip_cloth(10,43,300,130);
-            draw_text("Welcome to Fluxer",22,53,0.52f,C2D_Color32(247,255,255,255));
-            draw_text("Sign in to your real account.",22,82,0.36f,C2D_Color32(220,244,246,255));
+            draw_text("Welcome to Fluxer",22,51,0.60f,C2D_Color32(247,255,255,255));
+            draw_text("Sign in to your real account.",22,82,0.42f,C2D_Color32(220,244,246,255));
             draw_text(status_text,22,113,0.27f,app_state==3?C2D_Color32(255,211,211,255):C2D_Color32(231,250,250,255));
             draw_aero_button(10,185,300,45,app_state==4?"Verifying security check...":"Sign in with email and password",app_state==4?C2D_Color32(92,165,184,255):COL_ACCENT);
         } else if(app_state==1) {
             draw_zip_cloth(10,43,300,130);
-            draw_text("Two-factor authentication",22,53,0.42f,C2D_Color32(247,255,255,255));
-            draw_text("Use your authenticator app",22,82,0.34f,C2D_Color32(220,244,246,255));
+            draw_text("Two-factor authentication",22,51,0.50f,C2D_Color32(247,255,255,255));
+            draw_text("Use your authenticator app",22,82,0.41f,C2D_Color32(220,244,246,255));
             draw_text(status_text,22,120,0.28f,C2D_Color32(224,255,239,255));
             draw_aero_button(10,185,300,45,"Enter verification code",COL_ACCENT);
         }
@@ -1238,7 +1238,7 @@ static void render_bottom(void) {
     }
     if(screen_state==0||screen_state==1||screen_state==3) {
         int total=screen_state==0?guild_count+1:(screen_state==1?channel_count:friend_count);
-        draw_text(screen_state==0?"YOUR COMMUNITIES":(screen_state==1?"COMMUNITY CHANNELS":"FRIENDS"),12,40,0.31f,C2D_Color32(255,255,255,255));
+        draw_text(screen_state==0?"YOUR COMMUNITIES":(screen_state==1?"COMMUNITY CHANNELS":"FRIENDS"),12,38,0.39f,C2D_Color32(255,255,255,255));
         for(i=0;i<6&&list_offset+i<total;i++) {
             int idx=list_offset+i,col=i%2,row=i/2; float x=8+col*154,y=61+row*55; char label[72],symbol[8];
             if(screen_state==0) {
@@ -1250,18 +1250,18 @@ static void render_bottom(void) {
             } else { snprintf(label,sizeof(label),"%s",friend_items[idx].name); snprintf(symbol,sizeof(symbol),"@"); }
             draw_aero_tile(x,y,146,48,symbol,label,idx==selected_index);
         }
-        draw_text("D-pad: move   A: open   B: back",10,224,0.25f,C2D_Color32(255,255,255,255));
+        draw_text("D-pad: move   A: open   B: back",10,224,0.29f,C2D_Color32(255,255,255,255));
         draw_aero_button(264,216,22,20,"^",COL_ACCENT);
         draw_aero_button(289,216,22,20,"v",COL_ACCENT);
     } else if(screen_state==2) {
         static const char *faces[]={":)",":(",":D",";)","<3",":P","xD",":O"};
-        draw_text("MESSAGE COMPOSER",12,40,0.31f,C2D_Color32(255,255,255,255));
+        draw_text("MESSAGE COMPOSER",12,40,0.39f,C2D_Color32(255,255,255,255));
         if(emoji_panel_open) {
             for(i=0;i<8;i++) { int col=i%4,row=i/4; float x=8+col*78,y=66+row*46; draw_aero_button(x,y,72,38,faces[i],COL_ACCENT); }
         } else {
             draw_aero_panel(8,65,304,96);
-            draw_text("Draft:",16,73,0.30f,COL_MUTED);
-            draw_text(message_draft[0]?message_draft:"Your message will appear here.",16,99,0.32f,message_draft[0]?COL_TEXT:COL_MUTED);
+            draw_text("Draft:",16,72,0.37f,COL_MUTED);
+            draw_text(message_draft[0]?message_draft:"Your message will appear here.",16,98,0.40f,message_draft[0]?COL_TEXT:COL_MUTED);
         }
         draw_aero_button(8,174,174,38,"KEYBOARD",C2D_Color32(74,164,194,255));
         draw_aero_button(188,174,40,38,":)",COL_ACCENT);
@@ -1283,16 +1283,16 @@ static void render_top(void) {
     draw_aero_background(400,240);
     if(app_state==2&&screen_state==2) {
         draw_aero_panel(8,7,384,36);
-        draw_text(selected_channel_name,18,15,0.52f,COL_TEXT);
-        draw_text(account_name,282,18,0.30f,COL_GREEN);
-        for(i=0;i<7&&i+list_offset<message_count;i++) {
-            int idx=message_count-1-(i+list_offset); float y=51+i*26;
-            draw_aero_panel(10,y,380,23);
-            draw_text(message_items[idx].author,17,y+2,0.31f,COL_ACCENT);
-            draw_text(message_items[idx].content,116,y+3,0.30f,COL_TEXT);
+        draw_text(selected_channel_name,18,12,0.62f,COL_TEXT);
+        draw_text(account_name,282,18,0.34f,COL_GREEN);
+        for(i=0;i<5&&i+list_offset<message_count;i++) {
+            int idx=message_count-1-(i+list_offset); float y=51+i*34;
+            draw_aero_panel(10,y,380,30);
+            draw_text(message_items[idx].author,17,y+2,0.40f,COL_ACCENT);
+            draw_text(message_items[idx].content,116,y+3,0.39f,COL_TEXT);
         }
-        draw_text(home_status,14,190,0.30f,C2D_Color32(255,255,255,255));
-        draw_text("UP/DOWN: history   B: return to tiles",14,213,0.32f,C2D_Color32(255,255,255,255));
+        draw_text(home_status,14,190,0.34f,C2D_Color32(255,255,255,255));
+        draw_text("UP/DOWN: history   B: return to tiles",14,213,0.36f,C2D_Color32(255,255,255,255));
     } else if(app_state==2) {
         draw_aero_panel(14,12,372,212);
         draw_text("FLUXER",28,25,0.86f,COL_TEXT);
