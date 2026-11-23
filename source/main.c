@@ -17,6 +17,7 @@ static const char *ui_theme_names[] = {"AERO", "SUNSET", "LAVENDER", "MIDNIGHT"}
 #define SOC_ALIGN      0x1000
 #define SOC_BUFFERSIZE 0x100000
 #define HTTP_BODY_MAX  16384
+#define MESSAGE_BODY_MAX 262144
 #define TOKEN_MAX      2048
 #define INPUT_MAX      384
 
@@ -374,14 +375,14 @@ static void load_friends(void) {
             if(json_int_value(obj,"type",0)==1) {
                 const char *u=strstr(obj,"\"user\""); const char *ue=u?strchr(u,'{'):NULL; const char *uend=ue?object_end(ue):NULL;
                 FriendItem *fr=&friend_items[friend_count]; memset(fr,0,sizeof(*fr)); fr->dm_index=-1;
-                json_string(obj,"id",fr->id,sizeof(fr->id));
                 if(ue&&uend) {
                     char user_obj[1536]; size_t un=(size_t)(uend-ue);
                     if(un>=sizeof(user_obj)) un=sizeof(user_obj)-1;
                     memcpy(user_obj,ue,un); user_obj[un]='\0';
+                    /* Match DMs with the nested user ID, not the relationship ID. */
+                    json_string(user_obj,"id",fr->id,sizeof(fr->id));
                     if(!json_string(user_obj,"global_name",fr->name,sizeof(fr->name)))
                         json_string(user_obj,"username",fr->name,sizeof(fr->name));
-                    if(!fr->id[0]) json_string(user_obj,"id",fr->id,sizeof(fr->id));
                 }
                 if(fr->id[0]) {
                     int j; for(j=0;j<dm_count;j++) if(strcmp(dm_items[j].peer_id,fr->id)==0) { fr->dm_index=j; break; }
@@ -435,10 +436,10 @@ static void load_guild_channels(int index) {
     }
 }
 static void load_messages(const char *channel_id,const char *name,int is_dm,int index) {
-    static char response[HTTP_BODY_MAX]; char path[128],detail[128]; u32 code=0; const char *p;
+    static char response[MESSAGE_BODY_MAX]; char path[128],detail[128]; u32 code=0; const char *p;
     snprintf(path,sizeof(path),"/channels/%s/messages?limit=50",channel_id);
     Result rc=api_request(HTTPC_METHOD_GET,path,NULL,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
-    if(R_FAILED(rc)||code!=200) { snprintf(home_status,sizeof(home_status),"Messages failed: HTTP %lu",(unsigned long)code); return; }
+    if(R_FAILED(rc)||code!=200) { snprintf(home_status,sizeof(home_status),"Messages failed: HTTP %lu %.90s",(unsigned long)code,detail); return; }
     message_count=0; p=strchr(response,'['); if(p) p++;
     while(p&&*p&&message_count<MAX_MESSAGES) {
         if(*p=='{') {
@@ -1676,8 +1677,31 @@ int main(int argc, char *argv[])
                         else load_messages(channel_items[selected_index].id,channel_items[selected_index].name,0,selected_index);
                     } else if(screen_state==3&&selected_index<friend_count) {
                         int di=friend_items[selected_index].dm_index;
-                        if(di>=0)load_messages(dm_items[di].id,friend_items[selected_index].name,1,di);
-                        else snprintf(home_status,sizeof(home_status),"No existing DM channel found for this friend.");
+                        if(di>=0) {
+                            load_messages(dm_items[di].id,friend_items[selected_index].name,1,di);
+                        } else {
+                            char create_body[96],create_response[HTTP_BODY_MAX],create_detail[128];
+                            u32 create_code=0;
+                            snprintf(create_body,sizeof(create_body),"{\\"recipient_id\\":\\"%s\\"}",friend_items[selected_index].id);
+                            Result create_rc=api_request(HTTPC_METHOD_POST,"/users/@me/channels",create_body,session_token,NULL,create_response,sizeof(create_response),&create_code,create_detail,sizeof(create_detail));
+                            if(R_FAILED(create_rc)||(create_code!=200&&create_code!=201)) {
+                                snprintf(home_status,sizeof(home_status),"Open DM failed: HTTP %lu %.65s",(unsigned long)create_code,create_detail);
+                            } else {
+                                char new_channel_id[32];
+                                if(json_string(create_response,"id",new_channel_id,sizeof(new_channel_id))) {
+                                    int new_index;
+                                    if(dm_count<MAX_ITEMS) {
+                                        new_index=dm_count++;
+                                        memset(&dm_items[new_index],0,sizeof(dm_items[new_index]));
+                                        snprintf(dm_items[new_index].id,sizeof(dm_items[new_index].id),"%s",new_channel_id);
+                                        snprintf(dm_items[new_index].name,sizeof(dm_items[new_index].name),"%s",friend_items[selected_index].name);
+                                        snprintf(dm_items[new_index].peer_id,sizeof(dm_items[new_index].peer_id),"%s",friend_items[selected_index].id);
+                                    } else new_index=0;
+                                    friend_items[selected_index].dm_index=new_index;
+                                    load_messages(new_channel_id,friend_items[selected_index].name,1,new_index);
+                                } else snprintf(home_status,sizeof(home_status),"DM opened, but channel ID was missing.");
+                            }
+                        }
                     }
                 }
             } else if(message_count>0) {
