@@ -1,3 +1,4 @@
+
 name: Build Nintendo 3DS homebrew
 
 on:
@@ -7,11 +8,16 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     container:
       image: devkitpro/devkitarm:20260610
 
+    env:
+      CC: arm-none-eabi-gcc
+      CXX: arm-none-eabi-g++
+      LD: arm-none-eabi-gcc
+
     steps:
-    
       - name: Check out source
         uses: actions/checkout@v4
 
@@ -20,17 +26,23 @@ jobs:
           dkp-pacman -Sy --noconfirm
           dkp-pacman -S --needed --noconfirm 3ds-dev
 
-      - name: Diagnose 3DS headers
+      - name: Check toolchain
         run: |
-          echo "DEVKITPRO=$DEVKITPRO"
-          echo "DEVKITARM=$DEVKITARM"
-          echo "Checking libctru..."
-          ls -la "$DEVKITPRO/libctru/include/" || true
-          find "$DEVKITPRO" -name 3ds.h -print
+          echo "Checking 3DS header..."
           test -f "$DEVKITPRO/libctru/include/3ds.h"
+          echo "3DS header found!"
+
+          echo "Checking ARM compiler..."
+          command -v arm-none-eabi-gcc
+          arm-none-eabi-gcc --version
+
+          echo "Checking ARM linker..."
+          command -v arm-none-eabi-ld
 
       - name: Compile
-        run: make
+        run: |
+          make clean
+          make CC=arm-none-eabi-gcc CXX=arm-none-eabi-g++ LD=arm-none-eabi-gcc
 
       - name: Upload 3DSX
         uses: actions/upload-artifact@v4
@@ -39,13 +51,4 @@ jobs:
           path: |
             Fluxer3DS.3dsx
             Fluxer3DS.elf
-            Fluxer3DS.smdh
           if-no-files-found: error
-      - name: Show compiler configuration
-        run: |
-          echo "Checking header:"
-          ls -l "$DEVKITPRO/libctru/include/3ds.h"
-          echo "Compiler:"
-          which arm-none-eabi-gcc
-          echo "Compiler flags:"
-          make -n | head -40
