@@ -145,14 +145,13 @@ void altcha_cancel(void) {
 unsigned long altcha_progress(void) { return solver_counter; }
 
 int altcha_begin(const char *error_json) {
-    /* Keep large ALTCHA work buffers in static storage: the 3DS
-       default thread stack is too small for nested HTTPS + PBKDF2. */
-    static char challenge[ALTCHA_MAX_CHALLENGE];
-    static char params[2048];
-    static char algorithm[64], nonce_hex[256], salt_hex[256], prefix[128], signature[512];
-    static char derived_hex[ALTCHA_MAX_KEY * 2 + 1];
-    static char payload[ALTCHA_MAX_CHALLENGE + 512];
-    static unsigned char nonce[128], salt[128], password[132], derived[ALTCHA_MAX_KEY];
+/* Persistent work buffers stay off the small 3DS thread stack. */
+static char challenge[ALTCHA_MAX_CHALLENGE];
+static char params[2048];
+static char algorithm[64], nonce_hex[256], salt_hex[256], prefix[128], signature[512];
+static char derived_hex[ALTCHA_MAX_KEY * 2 + 1];
+static char payload[ALTCHA_MAX_CHALLENGE + 512];
+static unsigned char nonce[128], salt[128], password[132], derived[ALTCHA_MAX_KEY];
     unsigned long k;
     const mbedtls_md_info_t *md;
     altcha_cancel();
@@ -211,7 +210,7 @@ int altcha_step(unsigned int budget, char *token, size_t token_size) {
         hex_encode(derived, solver_key_len, derived_hex);
         if (has_prefix(derived_hex, prefix)) {
             int n = snprintf(payload, sizeof(payload),
-                "{\\"challenge\\":%s,\\"solution\\":{\\"counter\\":%lu,\\"derivedKey\\":\\"%s\\"}}",
+                "{\"challenge\":%s,\"solution\":{\"counter\":%lu,\"derivedKey\":\"%s\"}}",
                 challenge, solver_counter, derived_hex);
             if (n < 0 || (size_t)n >= sizeof(payload) ||
                 !b64_encode((const unsigned char *)payload, (size_t)n, token, token_size)) {
