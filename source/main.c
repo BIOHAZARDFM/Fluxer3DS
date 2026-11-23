@@ -1516,7 +1516,7 @@ static void render_bottom(void) {
 static void render_top(void) {
     int i;
     draw_aero_background(400,240);
-    if(app_state==2&&screen_state==2) {
+    if(app_state==2&&(screen_state==2||screen_state==5)) {
         draw_aero_panel(8,7,384,36);
         draw_text(selected_channel_name,18,12,0.62f,COL_TEXT);
         draw_text(account_name,282,18,0.34f,COL_GREEN);
@@ -1547,7 +1547,7 @@ static void render_top(void) {
         draw_text("Official Fluxer API  |  HTTPS",38,157,0.38f,COL_MUTED);
         draw_text("No calls or video features",38,187,0.34f,COL_MUTED);
     }
-    if(app_state==2 && screen_state==2) {
+    if(app_state==2 && (screen_state==2||screen_state==5)) {
         C2D_DrawCircleSolid(cursor_x,cursor_y,0.2f,5.0f,theme_color(255,255,255,255));
         C2D_DrawCircle(cursor_x,cursor_y,0.1f,7.0f,theme_color(20,80,110,255),2.0f);
     }
@@ -1600,7 +1600,7 @@ int main(int argc, char *argv[])
         u32 down = hidKeysDown();
         circlePosition circle;
         hidCircleRead(&circle);
-        if(app_state==2 && screen_state==2) {
+        if(app_state==2 && (screen_state==2||screen_state==5)) {
             cursor_x += ((float)circle.dx / 156.0f) * 5.0f;
             cursor_y -= ((float)circle.dy / 156.0f) * 5.0f;
             if(cursor_x<4)cursor_x=4; if(cursor_x>396)cursor_x=396;
@@ -1614,7 +1614,7 @@ int main(int argc, char *argv[])
         touchPosition touch;
         int touched=0,tile_touched=0,tile_index=-1;
         int composer_keyboard=0,composer_emoji=0,composer_send=0;
-        int settings_touched=0,settings_theme_touch=-1;
+        int settings_touched=0,settings_theme_touch=-1,message_action_confirm=0;
         if(down&KEY_TOUCH) {
             hidTouchRead(&touch);
             if(app_state==2 && touch.py>=36 && touch.py<=60 && touch.px>=230 && touch.px<=314)
@@ -1629,6 +1629,7 @@ int main(int argc, char *argv[])
             if(app_state==2 && screen_state==5 && touch.py>=96 && touch.py<228 && touch.px>=14 && touch.px<=306) {
                 message_action_index=(touch.py-96)/22;
                 if(message_action_index>5) message_action_index=5;
+                message_action_confirm=1;
             }
             touched=touch.px>=10&&touch.px<=310&&touch.py>=185&&touch.py<=230;
             if(app_state==2&&screen_state!=2&&touch.py>=61&&touch.py<214&&touch.px>=8&&touch.px<=312) {
@@ -1720,7 +1721,7 @@ int main(int argc, char *argv[])
                 if(down&KEY_B) { screen_state=2; }
                 else if(down&KEY_UP) { if(message_action_index>0) message_action_index--; }
                 else if(down&KEY_DOWN) { if(message_action_index<5) message_action_index++; }
-                else if(down&KEY_A) {
+                else if((down&KEY_A)||message_action_confirm) {
                     if(selected_message_index>=0 && selected_message_index<message_count) {
                         ChatItem *active_item=active_is_dm?&dm_items[active_channel]:&channel_items[active_channel];
                         if(message_action_index==0) {
