@@ -8,14 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     container:
       image: devkitpro/devkitarm:20260610
-
-    env:
-      CC: arm-none-eabi-gcc
-      CXX: arm-none-eabi-g++
-      LD: arm-none-eabi-gcc
 
     steps:
       - name: Check out source
@@ -26,23 +20,24 @@ jobs:
           dkp-pacman -Sy --noconfirm
           dkp-pacman -S --needed --noconfirm 3ds-dev
 
-      - name: Check toolchain
+      - name: Find ARM toolchain
         run: |
-          echo "Checking 3DS header..."
-          test -f "$DEVKITPRO/libctru/include/3ds.h"
-          echo "3DS header found!"
-
-          echo "Checking ARM compiler..."
-          command -v arm-none-eabi-gcc
-          arm-none-eabi-gcc --version
-
-          echo "Checking ARM linker..."
-          command -v arm-none-eabi-ld
+          echo "DEVKITPRO=$DEVKITPRO"
+          echo "DEVKITARM=$DEVKITARM"
+          echo "PATH=$PATH"
+          echo "Searching for ARM compiler..."
+          find "$DEVKITPRO" -type f -name 'arm-none-eabi-gcc' -print
+          find /usr -type f -name 'arm-none-eabi-gcc' -print 2>/dev/null || true
+          echo "Checking compiler commands..."
+          command -v arm-none-eabi-gcc || true
+          command -v arm-none-eabi-gcc.exe || true
+          ls -la "$DEVKITPRO/devkitARM/bin/" || true
 
       - name: Compile
         run: |
+          export PATH="$DEVKITPRO/devkitARM/bin:$PATH"
           make clean
-          make CC=arm-none-eabi-gcc CXX=arm-none-eabi-g++ LD=arm-none-eabi-gcc
+          make
 
       - name: Upload 3DSX
         uses: actions/upload-artifact@v4
