@@ -501,7 +501,7 @@ static void send_chat_message(void) {
     Result rc=api_request(HTTPC_METHOD_POST,path,body,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
     memset(escaped,0,sizeof(escaped)); memset(body,0,sizeof(body));
     if(R_FAILED(rc)||(code!=200&&code!=201)) snprintf(home_status,sizeof(home_status),"Send failed: HTTP %lu",(unsigned long)code);
-    else { memset(message_draft,0,sizeof(message_draft)); reply_message_id[0]='\\0'; load_messages(item->id,item->name,active_is_dm,active_channel); }
+    else { memset(message_draft,0,sizeof(message_draft)); reply_message_id[0]='\0'; load_messages(item->id,item->name,active_is_dm,active_channel); }
 }
 
 /* ---------------------------------------------------------
@@ -1549,7 +1549,8 @@ static void render_top(void) {
     }
     if(app_state==2 && (screen_state==2||screen_state==5)) {
         C2D_DrawCircleSolid(cursor_x,cursor_y,0.2f,5.0f,theme_color(255,255,255,255));
-        C2D_DrawCircle(cursor_x,cursor_y,0.1f,7.0f,theme_color(20,80,110,255),2.0f);
+        C2D_DrawRectSolid(cursor_x-8,cursor_y-1,0.1f,16,2,theme_color(20,80,110,255));
+        C2D_DrawRectSolid(cursor_x-1,cursor_y-8,0.1f,2,16,theme_color(20,80,110,255));
     }
 }
 
@@ -1603,8 +1604,10 @@ int main(int argc, char *argv[])
         if(app_state==2 && (screen_state==2||screen_state==5)) {
             cursor_x += ((float)circle.dx / 156.0f) * 5.0f;
             cursor_y -= ((float)circle.dy / 156.0f) * 5.0f;
-            if(cursor_x<4)cursor_x=4; if(cursor_x>396)cursor_x=396;
-            if(cursor_y<4)cursor_y=4; if(cursor_y>236)cursor_y=236;
+            if(cursor_x<4) cursor_x=4;
+            if(cursor_x>396) cursor_x=396;
+            if(cursor_y<4) cursor_y=4;
+            if(cursor_y>236) cursor_y=236;
         }
 
         /* Shoulder buttons cycle the visual theme without leaving the chat. */
