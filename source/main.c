@@ -11,6 +11,11 @@
 
 static u32 theme_color(u8 r, u8 g, u8 b, u8 a);
 static int ui_theme_index = 0;
+static int ui_dark_mode = 0;
+static float cursor_x = 200.0f, cursor_y = 120.0f;
+static int selected_message_index = -1;
+static int message_action_index = 0;
+static char reply_message_id[32] = "";
 static const char *ui_theme_names[] = {"AERO", "SUNSET", "LAVENDER", "MIDNIGHT"};
 
 #define API_BASE       "https://api.fluxer.app/v1"
@@ -81,6 +86,11 @@ static u32 theme_color(u8 r, u8 g, u8 b, u8 a)
     if (rr > 255) rr=255;
     if (gg > 255) gg=255;
     if (bb > 255) bb=255;
+    if (ui_dark_mode) {
+        rr = 18 + (rr * 82) / 255;
+        gg = 25 + (gg * 86) / 255;
+        bb = 38 + (bb * 100) / 255;
+    }
     return C2D_Color32((u8)rr,(u8)gg,(u8)bb,a);
 }
 
@@ -92,6 +102,7 @@ static void save_ui_theme(void)
     f=fopen("sdmc:/3ds/Fluxer3DS/theme.dat","wb");
     if (!f) return;
     fputc('0'+ui_theme_index,f);
+    fputc(ui_dark_mode?'1':'0',f);
     fclose(f);
 }
 
@@ -101,8 +112,10 @@ static void load_ui_theme(void)
     int c;
     if (!f) return;
     c=fgetc(f);
-    fclose(f);
     if (c>='0' && c<='3') ui_theme_index=c-'0';
+    c=fgetc(f);
+    if (c=='0' || c=='1') ui_dark_mode=c-'0';
+    fclose(f);
 }
 
 static void cycle_ui_theme(int direction)
@@ -290,7 +303,7 @@ static void delete_saved_session(void);
 #define MAX_ITEMS 64
 #define MAX_MESSAGES 50
 typedef struct { char id[32]; char name[72]; char peer_id[32]; int type; } ChatItem;
-typedef struct { char author[48]; char content[240]; } ChatMessage;
+typedef struct { char id[32]; char author[48]; char content[240]; } ChatMessage;
 typedef struct { char id[32]; char name[72]; int dm_index; } FriendItem;
 static ChatItem dm_items[MAX_ITEMS], guild_items[MAX_ITEMS], channel_items[MAX_ITEMS];
 static FriendItem friend_items[MAX_ITEMS];
@@ -453,6 +466,7 @@ static void load_messages(const char *channel_id,const char *name,int is_dm,int 
             if (n >= sizeof(obj))
                 n = sizeof(obj) - 1;
             memcpy(obj,p,n); obj[n]='\0'; memset(&message_items[message_count],0,sizeof(ChatMessage));
+            json_string(obj,"id",message_items[message_count].id,sizeof(message_items[message_count].id));
             json_string(obj,"content",message_items[message_count].content,sizeof(message_items[message_count].content));
             { const char *a=strstr(obj,"\"author\""); if(a && !json_string(a,"global_name",message_items[message_count].author,sizeof(message_items[message_count].author))) json_string(a,"username",message_items[message_count].author,sizeof(message_items[message_count].author)); }
             if(!message_items[message_count].author[0]) snprintf(message_items[message_count].author,sizeof(message_items[message_count].author),"User");
@@ -479,12 +493,15 @@ static void send_chat_message(void) {
     ChatItem *item=active_is_dm?&dm_items[active_channel]:&channel_items[active_channel];
     if(!message_draft[0]) { snprintf(home_status,sizeof(home_status),"Write a message first."); return; }
     if(!json_escape(message_draft,escaped,sizeof(escaped))) return;
-    snprintf(body,sizeof(body),"{\"content\":\"%s\"}",escaped);
+    if(reply_message_id[0])
+        snprintf(body,sizeof(body),"{\"content\":\"%s\",\"message_reference\":{\"message_id\":\"%s\"}}",escaped,reply_message_id);
+    else
+        snprintf(body,sizeof(body),"{\"content\":\"%s\"}",escaped);
     snprintf(path,sizeof(path),"/channels/%s/messages",item->id);
     Result rc=api_request(HTTPC_METHOD_POST,path,body,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
     memset(escaped,0,sizeof(escaped)); memset(body,0,sizeof(body));
     if(R_FAILED(rc)||(code!=200&&code!=201)) snprintf(home_status,sizeof(home_status),"Send failed: HTTP %lu",(unsigned long)code);
-    else { memset(message_draft,0,sizeof(message_draft)); load_messages(item->id,item->name,active_is_dm,active_channel); }
+    else { memset(message_draft,0,sizeof(message_draft)); reply_message_id[0]='\\0'; load_messages(item->id,item->name,active_is_dm,active_channel); }
 }
 
 /* ---------------------------------------------------------
@@ -1454,13 +1471,23 @@ static void render_bottom(void) {
         draw_aero_button(289,216,22,20,"v",COL_ACCENT);
     } else if(screen_state==4) {
         int ti;
-        draw_text("SETTINGS",14,68,0.62f,theme_color(255,255,255,255));
-        draw_text("Choose an interface theme",14,91,0.39f,COL_TEXT);
+        draw_text("SETTINGS",14,49,0.62f,COL_TEXT);
+        draw_text("Interface theme",14,76,0.39f,COL_MUTED);
         for(ti=0;ti<4;ti++) {
-            draw_aero_button(14,116+ti*27,292,23,ui_theme_names[ti],
+            draw_aero_button(14,96+ti*25,292,22,ui_theme_names[ti],
                 ti==ui_theme_index?COL_GREEN:theme_color(74,150,183,255));
         }
-        draw_text("Tap a theme or use L/R to switch.",14,229,0.31f,COL_TEXT);
+        draw_text("Appearance mode",14,201,0.34f,COL_MUTED);
+        draw_aero_button(174,194,132,28,ui_dark_mode?"DARK MODE":"LIGHT MODE",COL_ACCENT);
+        draw_text("A: select   B: back",14,229,0.30f,COL_TEXT);
+    } else if(screen_state==5) {
+        static const char *actions[]={"Reply","Heart","Thumbs up","Thumbs down","Laugh","Sad"};
+        draw_text("MESSAGE ACTIONS",14,48,0.58f,COL_TEXT);
+        draw_text("Choose what to do with this message",14,76,0.34f,COL_MUTED);
+        for(i=0;i<6;i++)
+            draw_aero_button(14,96+i*22,292,20,actions[i],
+                i==message_action_index?COL_GREEN:COL_ACCENT);
+        draw_text("A: confirm   B: cancel",14,229,0.30f,COL_TEXT);
     } else if(screen_state==2) {
         static const char *faces[]={":)",":(",":D",";)","<3",":P","xD",":O"};
         draw_text("MESSAGE COMPOSER",12,40,0.39f,theme_color(255,255,255,255));
@@ -1500,7 +1527,7 @@ static void render_top(void) {
             draw_text(message_items[idx].content,116,y+3,0.39f,COL_TEXT);
         }
         draw_text(home_status,14,190,0.34f,theme_color(255,255,255,255));
-        draw_text("UP/DOWN: history   B: return to tiles",14,213,0.36f,theme_color(255,255,255,255));
+        draw_text("Circle Pad: cursor   A: message actions   B: tiles",14,213,0.34f,theme_color(255,255,255,255));
     } else if(app_state==2) {
         draw_aero_panel(14,12,372,212);
         draw_text("FLUXER",28,25,0.86f,COL_TEXT);
@@ -1519,6 +1546,10 @@ static void render_top(void) {
         draw_text("Fluxer account sign-in",38,124,0.48f,COL_TEXT);
         draw_text("Official Fluxer API  |  HTTPS",38,157,0.38f,COL_MUTED);
         draw_text("No calls or video features",38,187,0.34f,COL_MUTED);
+    }
+    if(app_state==2 && screen_state==2) {
+        C2D_DrawCircleSolid(cursor_x,cursor_y,0.2f,5.0f,theme_color(255,255,255,255));
+        C2D_DrawCircle(cursor_x,cursor_y,0.1f,7.0f,theme_color(20,80,110,255),2.0f);
     }
 }
 
@@ -1567,6 +1598,14 @@ int main(int argc, char *argv[])
         hidScanInput();
 
         u32 down = hidKeysDown();
+        circlePosition circle;
+        hidCircleRead(&circle);
+        if(app_state==2 && screen_state==2) {
+            cursor_x += ((float)circle.dx / 156.0f) * 5.0f;
+            cursor_y -= ((float)circle.dy / 156.0f) * 5.0f;
+            if(cursor_x<4)cursor_x=4; if(cursor_x>396)cursor_x=396;
+            if(cursor_y<4)cursor_y=4; if(cursor_y>236)cursor_y=236;
+        }
 
         /* Shoulder buttons cycle the visual theme without leaving the chat. */
         if (app_state == 2 && (down & KEY_L)) cycle_ui_theme(-1);
@@ -1580,9 +1619,16 @@ int main(int argc, char *argv[])
             hidTouchRead(&touch);
             if(app_state==2 && touch.py>=36 && touch.py<=60 && touch.px>=230 && touch.px<=314)
                 settings_touched=1;
-            if(app_state==2 && screen_state==4 && touch.py>=116 && touch.py<224 && touch.px>=14 && touch.px<=306) {
-                settings_theme_touch=(touch.py-116)/27;
+            if(app_state==2 && screen_state==4 && touch.py>=96 && touch.py<196 && touch.px>=14 && touch.px<=306) {
+                settings_theme_touch=(touch.py-96)/25;
                 if(settings_theme_touch<0 || settings_theme_touch>3) settings_theme_touch=-1;
+            }
+            if(app_state==2 && screen_state==4 && touch.py>=194 && touch.py<=224 && touch.px>=174 && touch.px<=306) {
+                ui_dark_mode=!ui_dark_mode; save_ui_theme();
+            }
+            if(app_state==2 && screen_state==5 && touch.py>=96 && touch.py<228 && touch.px>=14 && touch.px<=306) {
+                message_action_index=(touch.py-96)/22;
+                if(message_action_index>5) message_action_index=5;
             }
             touched=touch.px>=10&&touch.px<=310&&touch.py>=185&&touch.py<=230;
             if(app_state==2&&screen_state!=2&&touch.py>=61&&touch.py<214&&touch.px>=8&&touch.px<=312) {
@@ -1663,9 +1709,36 @@ int main(int argc, char *argv[])
             } else if(screen_state==4) {
                 if(settings_theme_touch>=0) { ui_theme_index=settings_theme_touch; save_ui_theme(); selected_index=ui_theme_index; }
                 else if(down&KEY_B) { screen_state=settings_return_screen; }
-                else if(down&KEY_UP) { selected_index=(selected_index+3)%4; }
-                else if(down&KEY_DOWN) { selected_index=(selected_index+1)%4; }
-                else if(down&KEY_A) { ui_theme_index=selected_index; save_ui_theme(); }
+                else if(down&KEY_UP) { selected_index=(selected_index+4)%5; }
+                else if(down&KEY_DOWN) { selected_index=(selected_index+1)%5; }
+                else if(down&KEY_A) {
+                    if(selected_index<4) ui_theme_index=selected_index;
+                    else ui_dark_mode=!ui_dark_mode;
+                    save_ui_theme();
+                }
+            } else if(screen_state==5) {
+                if(down&KEY_B) { screen_state=2; }
+                else if(down&KEY_UP) { if(message_action_index>0) message_action_index--; }
+                else if(down&KEY_DOWN) { if(message_action_index<5) message_action_index++; }
+                else if(down&KEY_A) {
+                    if(selected_message_index>=0 && selected_message_index<message_count) {
+                        ChatItem *active_item=active_is_dm?&dm_items[active_channel]:&channel_items[active_channel];
+                        if(message_action_index==0) {
+                            snprintf(reply_message_id,sizeof(reply_message_id),"%s",message_items[selected_message_index].id);
+                            screen_state=2;
+                            open_message_keyboard();
+                        } else {
+                            static const char *encoded_reactions[]={"%E2%9D%A4%EF%B8%8F","%F0%9F%91%8D","%F0%9F%91%8E","%F0%9F%98%82","%F0%9F%98%A2"};
+                            char reaction_path[256],reaction_response[1024],reaction_detail[128]; u32 reaction_code=0;
+                            snprintf(reaction_path,sizeof(reaction_path),"/channels/%s/messages/%s/reactions/%s/@me",active_item->id,message_items[selected_message_index].id,encoded_reactions[message_action_index-1]);
+                            Result reaction_rc=api_request(HTTPC_METHOD_PUT,reaction_path,NULL,session_token,NULL,reaction_response,sizeof(reaction_response),&reaction_code,reaction_detail,sizeof(reaction_detail));
+                            if(R_FAILED(reaction_rc)||(reaction_code!=200&&reaction_code!=204))
+                                snprintf(home_status,sizeof(home_status),"Reaction failed: HTTP %lu",(unsigned long)reaction_code);
+                            else snprintf(home_status,sizeof(home_status),"Reaction added.");
+                            screen_state=2;
+                        }
+                    } else screen_state=2;
+                }
             } else if(down&KEY_X) {
                 if(screen_state==2) emoji_panel_open=!emoji_panel_open;
                 else {
