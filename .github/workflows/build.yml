@@ -20,6 +20,19 @@ jobs:
           dkp-pacman -S --needed --noconfirm 3ds-dev 3ds-mbedtls 3dstools
           echo "$DEVKITPRO/tools/bin" >> "$GITHUB_PATH"
 
+      - name: Build cxitool
+        run: |
+          dkp-pacman -S --needed --noconfirm autoconf automake libtool pkgconf
+          git clone --depth 1 --branch cxi-stuff https://github.com/devkitPro/3dstools.git /tmp/3dstools
+          cd /tmp/3dstools
+          autoreconf -fi
+          ./configure
+          make -j2
+          CXITOOL_PATH="$(find . -type f -name cxitool -print -quit)"
+          test -n "$CXITOOL_PATH"
+          install -m 755 "$CXITOOL_PATH" "$DEVKITPRO/tools/bin/cxitool"
+          test -x "$DEVKITPRO/tools/bin/cxitool"
+
       - name: Install makerom
         run: |
           curl -L --fail --retry 3 \
