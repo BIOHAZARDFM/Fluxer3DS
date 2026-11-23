@@ -16,12 +16,17 @@ jobs:
 
       - name: Install Nintendo 3DS libraries
         run: |
-          dkp-pacman -S --noconfirm 3ds-dev
+          dkp-pacman -Sy --noconfirm
+          dkp-pacman -S --needed --noconfirm 3ds-dev
 
-      - name: Verify 3DS libraries
+      - name: Diagnose 3DS headers
         run: |
+          echo "DEVKITPRO=$DEVKITPRO"
+          echo "DEVKITARM=$DEVKITARM"
+          echo "Checking libctru..."
+          ls -la "$DEVKITPRO/libctru/include/" || true
+          find "$DEVKITPRO" -name 3ds.h -print
           test -f "$DEVKITPRO/libctru/include/3ds.h"
-          echo "3DS headers found!"
 
       - name: Compile
         run: make
