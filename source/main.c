@@ -1655,8 +1655,8 @@ int main(int argc, char *argv[])
         else if(app_state==2) {
             int total=screen_state==0?guild_count+1:(screen_state==1?channel_count:(screen_state==3?friend_count:message_count));
             if(settings_touched) {
-                if(screen_state==4) { screen_state=chat_return_screen; }
-                else { chat_return_screen=screen_state; screen_state=4; selected_index=ui_theme_index; }
+                if(screen_state==4) { screen_state=settings_return_screen; }
+                else { settings_return_screen=screen_state; screen_state=4; selected_index=ui_theme_index; }
             } else if(screen_state==4) {
                 if(settings_theme_touch>=0) { ui_theme_index=settings_theme_touch; save_ui_theme(); selected_index=ui_theme_index; }
                 else if(down&KEY_B) { screen_state=chat_return_screen; }
