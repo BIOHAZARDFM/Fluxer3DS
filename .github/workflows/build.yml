@@ -22,7 +22,9 @@ jobs:
 
       - name: Build cxitool
         run: |
-          dkp-pacman -S --needed --noconfirm autoconf automake libtool pkgconf
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential autoconf automake libtool libtool-bin pkg-config
           git clone --depth 1 --branch cxi-stuff https://github.com/devkitPro/3dstools.git /tmp/3dstools
           cd /tmp/3dstools
           autoreconf -fi
