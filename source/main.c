@@ -217,19 +217,61 @@ static int parse_items(const char *json,ChatItem *out,int max,int dm) {
             if(dm) {
                 const char *r=strstr(obj,"\"recipients\"");
                 char display_name[72]={0};
-                /* Prefer the visible profile name over the @username. */
-                if(r && !json_string(r,"global_name",display_name,sizeof(display_name)))
-                    json_string(r,"username",display_name,sizeof(display_name));
-                if(display_name[0])
-                    snprintf(out[count].name,sizeof(out[count].name),"%s",display_name);
-                if(!out[count].name[0])
-                    snprintf(out[count].name,sizeof(out[count].name),"Direct message");
+                if(r) {
+                    const char *person=strchr(r,'{');
+                    const char *person_end=person?object_end(person):NULL;
+                    if(person&&person_end) {
+                        char person_obj[1024]; size_t pn=(size_t)(person_end-person);
+                        if(pn>=sizeof(person_obj)) pn=sizeof(person_obj)-1;
+                        memcpy(person_obj,person,pn); person_obj[pn]='\0';
+                        json_string(person_obj,"id",out[count].peer_id,sizeof(out[count].peer_id));
+                        if(!json_string(person_obj,"global_name",display_name,sizeof(display_name)))
+                            json_string(person_obj,"username",display_name,sizeof(display_name));
+                    }
+                }
+                if(display_name[0]) snprintf(out[count].name,sizeof(out[count].name),"%s",display_name);
+                if(!out[count].name[0]) snprintf(out[count].name,sizeof(out[count].name),"Direct message");
             }
             if(out[count].id[0]) count++;
             p=end;
         } else p++;
     }
     return count;
+}
+static void load_friends(void) {
+    static char response[HTTP_BODY_MAX];
+    char detail[128]; u32 code=0; const char *p;
+    friend_count=0;
+    Result rc=api_request(HTTPC_METHOD_GET,"/users/@me/relationships",NULL,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
+    if(R_FAILED(rc)||code!=200) return;
+    p=strchr(response,'['); if(!p) return; p++;
+    while(*p&&friend_count<MAX_ITEMS) {
+        if(*p=='{') {
+            const char *end=object_end(p); char obj[4096]; size_t n;
+            if(!end) break;
+            n=(size_t)(end-p); if(n>=sizeof(obj)) n=sizeof(obj)-1;
+            memcpy(obj,p,n); obj[n]='\0';
+            if(json_int_value(obj,"type",0)==1) {
+                const char *u=strstr(obj,"\"user\""); const char *ue=u?strchr(u,'{'):NULL; const char *uend=ue?object_end(ue):NULL;
+                FriendItem *fr=&friend_items[friend_count]; memset(fr,0,sizeof(*fr)); fr->dm_index=-1;
+                json_string(obj,"id",fr->id,sizeof(fr->id));
+                if(ue&&uend) {
+                    char user_obj[1536]; size_t un=(size_t)(uend-ue);
+                    if(un>=sizeof(user_obj)) un=sizeof(user_obj)-1;
+                    memcpy(user_obj,ue,un); user_obj[un]='\0';
+                    if(!json_string(user_obj,"global_name",fr->name,sizeof(fr->name)))
+                        json_string(user_obj,"username",fr->name,sizeof(fr->name));
+                    if(!fr->id[0]) json_string(user_obj,"id",fr->id,sizeof(fr->id));
+                }
+                if(fr->id[0]) {
+                    int j; for(j=0;j<dm_count;j++) if(strcmp(dm_items[j].peer_id,fr->id)==0) { fr->dm_index=j; break; }
+                    if(!fr->name[0]) snprintf(fr->name,sizeof(fr->name),"Friend");
+                    friend_count++;
+                }
+            }
+            p=end;
+        } else p++;
+    }
 }
 static void load_home_data(void) {
     static char response[HTTP_BODY_MAX]; char detail[128]; u32 code=0;
@@ -239,7 +281,8 @@ static void load_home_data(void) {
     rc=api_request(HTTPC_METHOD_GET,"/users/@me/guilds",NULL,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
     if(R_FAILED(rc)||code!=200) { snprintf(home_status,sizeof(home_status),"Loaded DMs; servers failed: HTTP %lu",(unsigned long)code); return; }
     guild_count=parse_items(response,guild_items,MAX_ITEMS,0);
-    snprintf(home_status,sizeof(home_status),"%d DMs and %d servers loaded",dm_count,guild_count);
+    load_friends();
+    snprintf(home_status,sizeof(home_status),"%d friends and %d communities loaded",friend_count,guild_count);
     screen_state=0; selected_index=0; list_offset=0;
 }
 static void load_guild_channels(int index) {
