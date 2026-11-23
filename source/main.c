@@ -229,6 +229,8 @@ static Result init_network(void)
 
     /* libcurl uses libctru sockets and mbedTLS on the 3DS. */
     if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+        sslcExit();
+        sslc_ready = 0;
         socExit();
         free(soc_buffer);
         soc_buffer = NULL;
