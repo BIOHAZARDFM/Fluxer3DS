@@ -1707,7 +1707,7 @@ int main(int argc, char *argv[])
                         } else {
                             char create_body[96],create_response[HTTP_BODY_MAX],create_detail[128];
                             u32 create_code=0;
-                            snprintf(create_body,sizeof(create_body),"{\\"recipient_id\\":\\"%s\\"}",friend_items[selected_index].id);
+                            snprintf(create_body,sizeof(create_body),"{\"recipient_id\":\"%s\"}",friend_items[selected_index].id);
                             Result create_rc=api_request(HTTPC_METHOD_POST,"/users/@me/channels",create_body,session_token,NULL,create_response,sizeof(create_response),&create_code,create_detail,sizeof(create_detail));
                             if(R_FAILED(create_rc)||(create_code!=200&&create_code!=201)) {
                                 snprintf(home_status,sizeof(home_status),"Open DM failed: HTTP %lu %.65s",(unsigned long)create_code,create_detail);
