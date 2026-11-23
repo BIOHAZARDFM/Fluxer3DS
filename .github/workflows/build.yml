@@ -1,4 +1,3 @@
-
 name: Build Nintendo 3DS homebrew
 
 on:
@@ -14,6 +13,10 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Install Nintendo 3DS libraries
+        run: |
+          dkp-pacman -S --noconfirm 3ds-dev
 
       - name: Verify 3DS libraries
         run: |
