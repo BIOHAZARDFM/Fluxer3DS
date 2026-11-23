@@ -11,35 +11,36 @@ endif
 
 TOPDIR ?= $(CURDIR)
 
-# Load official 3DS build rules first.
+# Load the official Nintendo 3DS build rules.
 include $(DEVKITARM)/3ds_rules
 
-TARGET  := Fluxer3DS
-BUILD   := build
-SOURCES := source
+# Project settings
+TARGET   := Fluxer3DS
+BUILD    := build
+SOURCES  := source
 INCLUDES := include
 
+# Nintendo 3DS ARM architecture
 ARCH := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 
-# Explicit header paths.
-CTRULIB_INCLUDE := $(DEVKITPRO)/libctru/include
-PORTLIB_INCLUDE := $(DEVKITPRO)/portlibs/3ds/include
-
+# Compiler flags
 CFLAGS := -g -Wall -Wextra -O2 -mword-relocations \
-          -fomit-frame-pointer -ffunction-sections \
-          $(ARCH) \
-          -I$(CTRULIB_INCLUDE) \
-          -I$(PORTLIB_INCLUDE) \
-          -I$(CURDIR)/include \
-          -D__3DS__
+          -ffunction-sections \
+          $(ARCH)
+
+CFLAGS += $(INCLUDE) -D__3DS__
 
 CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
-ASFLAGS := -g $(ARCH)
+ASFLAGS  := -g $(ARCH)
 
+# Linker flags
+LDFLAGS := -specs=3dsx.specs -g $(ARCH)
+
+# Libraries
+LIBS    := -lcitro2d -lcitro3d -lctru -lm
 LIBDIRS := $(CTRULIB) $(PORTLIBS)
 
-LIBS := -lcitro2d -lcitro3d -lctru -lm
-
+# Parent build process
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 
 export OUTPUT  := $(CURDIR)/$(TARGET)
@@ -51,15 +52,34 @@ CFILES   := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 CPPFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 SFILES   := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 
-export OFILES := $(CFILES:.c=.o) $(CPPFILES:.cpp=.o) $(SFILES:.s=.o)
+# Select the correct ARM linker.
+ifeq ($(strip $(CPPFILES)),)
 export LD := $(CC)
+else
+export LD := $(CXX)
+endif
 
+export OFILES_SOURCES := $(CFILES:.c=.o) \
+                         $(CPPFILES:.cpp=.o) \
+                         $(SFILES:.s=.o)
+
+export OFILES := $(OFILES_SOURCES)
+
+# Header search paths
 export INCLUDE := -I$(CURDIR)/include \
                   -I$(CTRULIB)/include \
                   -I$(PORTLIBS)/include \
                   -I$(CURDIR)/$(BUILD)
 
+# Library search paths
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
+
+# Generate application metadata.
+export _3DSXDEPS := $(if $(NO_SMDH),,$(OUTPUT).smdh)
+
+ifeq ($(strip $(NO_SMDH)),)
+export _3DSXFLAGS += --smdh=$(CURDIR)/$(TARGET).smdh
+endif
 
 .PHONY: all clean
 
@@ -73,11 +93,12 @@ clean:
 	@echo Cleaning...
 	@rm -rf $(BUILD) $(TARGET).3dsx $(TARGET).elf $(TARGET).smdh
 
+# Actual compilation and linking
 else
 
 DEPENDS := $(OFILES:.o=.d)
 
-$(OUTPUT).3dsx: $(OUTPUT).elf
+$(OUTPUT).3dsx: $(OUTPUT).elf $(_3DSXDEPS)
 
 $(OUTPUT).elf: $(OFILES)
 
