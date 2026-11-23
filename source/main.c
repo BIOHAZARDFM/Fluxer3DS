@@ -78,7 +78,9 @@ static u32 theme_color(u8 r, u8 g, u8 b, u8 a)
             break;
         default: break; /* Original Frutiger Aero */
     }
-    if (rr > 255) rr=255; if (gg > 255) gg=255; if (bb > 255) bb=255;
+    if (rr > 255) rr=255;
+    if (gg > 255) gg=255;
+    if (bb > 255) bb=255;
     return C2D_Color32((u8)rr,(u8)gg,(u8)bb,a);
 }
 
@@ -296,6 +298,7 @@ static ChatMessage message_items[MAX_MESSAGES];
 static int dm_count=0,guild_count=0,channel_count=0,message_count=0,friend_count=0;
 static int screen_state=0,selected_index=0,list_offset=0,active_guild=0,active_channel=0,active_is_dm=0;
 static int chat_return_screen=0,chat_return_selection=0;
+static int settings_return_screen=0;
 static int transition_active=0,pending_guild_index=-1;
 static u64 transition_started=0;
 static int emoji_panel_open=0;
@@ -1659,7 +1662,7 @@ int main(int argc, char *argv[])
                 else { settings_return_screen=screen_state; screen_state=4; selected_index=ui_theme_index; }
             } else if(screen_state==4) {
                 if(settings_theme_touch>=0) { ui_theme_index=settings_theme_touch; save_ui_theme(); selected_index=ui_theme_index; }
-                else if(down&KEY_B) { screen_state=chat_return_screen; }
+                else if(down&KEY_B) { screen_state=settings_return_screen; }
                 else if(down&KEY_UP) { selected_index=(selected_index+3)%4; }
                 else if(down&KEY_DOWN) { selected_index=(selected_index+1)%4; }
                 else if(down&KEY_A) { ui_theme_index=selected_index; save_ui_theme(); }
