@@ -205,6 +205,92 @@ static void append_utf8_codepoint(char *out, size_t cap, size_t *used,
     for (i = 0; i < count; i++) out[(*used)++] = (char)bytes[i];
 }
 
+
+/* Read only direct members of a JSON object. The older strstr-based helper
+   could accidentally pick "content"/"id" from nested embeds or attachments. */
+static const char *json_value_end(const char *p) {
+    int depth=0, quoted=0, escaped=0;
+    if(!p) return NULL;
+    while(*p==' '||*p=='\t'||*p=='\r'||*p=='\n') p++;
+    if(*p=='"') {
+        p++;
+        while(*p) {
+            if(escaped) escaped=0;
+            else if(*p=='\\') escaped=1;
+            else if(*p=='"') return p+1;
+            p++;
+        }
+        return NULL;
+    }
+    if(*p=='{'||*p=='[') {
+        char open=*p, close=(open=='{'?'}':']');
+        depth=1; p++;
+        while(*p&&depth) {
+            if(quoted) {
+                if(escaped) escaped=0;
+                else if(*p=='\\') escaped=1;
+                else if(*p=='"') quoted=0;
+            } else {
+                if(*p=='"') quoted=1;
+                else if(*p==open) depth++;
+                else if(*p==close) depth--;
+            }
+            p++;
+        }
+        return depth==0?p:NULL;
+    }
+    while(*p&&*p!=','&&*p!='}'&&*p!=']') p++;
+    return p;
+}
+static int json_member_span(const char *obj,const char *key,
+                            const char **value_start,const char **value_end) {
+    const char *p=obj;
+    size_t key_len;
+    if(!p||!key||*p!='{') return 0;
+    key_len=strlen(key); p++;
+    for(;;) {
+        const char *ks,*ke,*vs,*ve;
+        while(*p==' '||*p=='\t'||*p=='\r'||*p=='\n'||*p==',') p++;
+        if(*p=='}'||!*p) return 0;
+        if(*p!='"') return 0;
+        ks=++p;
+        while(*p&&(*p!='"'||(p>ks&&p[-1]=='\\'))) p++;
+        if(!*p) return 0;
+        ke=p++;
+        while(*p==' '||*p=='\t'||*p=='\r'||*p=='\n') p++;
+        if(*p++!=':') return 0;
+        while(*p==' '||*p=='\t'||*p=='\r'||*p=='\n') p++;
+        vs=p; ve=json_value_end(vs); if(!ve) return 0;
+        if((size_t)(ke-ks)==key_len&&memcmp(ks,key,key_len)==0) {
+            if(value_start) *value_start=vs;
+            if(value_end) *value_end=ve;
+            return 1;
+        }
+        p=ve;
+        while(*p==' '||*p=='\t'||*p=='\r'||*p=='\n') p++;
+        if(*p=='}'||!*p) return 0;
+        if(*p!=',') return 0;
+        p++;
+    }
+}
+static int json_top_string(const char *obj,const char *key,char *out,size_t cap) {
+    const char *vs,*ve;
+    char wrapped[4096];
+    size_t n;
+    if(!json_member_span(obj,key,&vs,&ve)||*vs!='"') { if(cap) out[0]='\0'; return 0; }
+    n=(size_t)(ve-vs);
+    if(n+8>=sizeof(wrapped)) { if(cap) out[0]='\0'; return 0; }
+    memcpy(wrapped,"{\"v\":",5); memcpy(wrapped+5,vs,n);
+    wrapped[5+n]='}'; wrapped[6+n]='\0';
+    return json_string(wrapped,"v",out,cap);
+}
+static int json_top_object(const char *obj,const char *key,char *out,size_t cap) {
+    const char *vs,*ve; size_t n;
+    if(!json_member_span(obj,key,&vs,&ve)||*vs!='{') { if(cap) out[0]='\0'; return 0; }
+    n=(size_t)(ve-vs); if(n>=cap) { if(cap) out[0]='\0'; return 0; }
+    memcpy(out,vs,n); out[n]='\0'; return 1;
+}
+
 static int json_string(const char *json, const char *key,
                        char *out, size_t out_size)
 {
@@ -331,7 +417,7 @@ static void delete_saved_session(void);
 #define MAX_ITEMS 256
 #define MAX_MESSAGES 50
 typedef struct { char id[32]; char name[72]; char peer_id[32]; int type; } ChatItem;
-typedef struct { char id[32]; char author[48]; char content[240]; } ChatMessage;
+typedef struct { char id[32]; char author[48]; char content[512]; } ChatMessage;
 typedef struct { char id[32]; char name[72]; int dm_index; } FriendItem;
 static ChatItem dm_items[MAX_ITEMS], guild_items[MAX_ITEMS], channel_items[MAX_ITEMS];
 static FriendItem friend_items[MAX_ITEMS];
@@ -487,7 +573,9 @@ static void sort_messages_newest_first(void) {
         ChatMessage item=message_items[i];
         j=i-1;
         while(j>=0 && item.id[0] && message_items[j].id[0] &&
-              strcmp(message_items[j].id,item.id)<0) {
+              (strlen(message_items[j].id)<strlen(item.id) ||
+               (strlen(message_items[j].id)==strlen(item.id) &&
+                strcmp(message_items[j].id,item.id)<0))) {
             message_items[j+1]=message_items[j];
             j--;
         }
@@ -507,12 +595,19 @@ static void load_messages(const char *channel_id,const char *name,int is_dm,int 
             if (!end)
                 break;
             n = (size_t)(end - p);
-            if (n >= sizeof(obj))
-                n = sizeof(obj) - 1;
-            memcpy(obj,p,n); obj[n]='\0'; memset(&message_items[message_count],0,sizeof(ChatMessage));
-            json_string(obj,"id",message_items[message_count].id,sizeof(message_items[message_count].id));
-            json_string(obj,"content",message_items[message_count].content,sizeof(message_items[message_count].content));
-            { const char *a=strstr(obj,"\"author\""); if(a && !json_string(a,"global_name",message_items[message_count].author,sizeof(message_items[message_count].author))) json_string(a,"username",message_items[message_count].author,sizeof(message_items[message_count].author)); }
+            if (n >= sizeof(obj)) { p=end; continue; }
+            memcpy(obj,p,n); obj[n]='\0';
+            memset(&message_items[message_count],0,sizeof(ChatMessage));
+            json_top_string(obj,"id",message_items[message_count].id,sizeof(message_items[message_count].id));
+            json_top_string(obj,"content",message_items[message_count].content,sizeof(message_items[message_count].content));
+            {
+                char author_obj[1536];
+                if(json_top_object(obj,"author",author_obj,sizeof(author_obj))) {
+                    if(!json_top_string(author_obj,"global_name",message_items[message_count].author,sizeof(message_items[message_count].author)))
+                        json_top_string(author_obj,"username",message_items[message_count].author,sizeof(message_items[message_count].author));
+                }
+            }
+            if(!message_items[message_count].id[0]) { p=end; continue; }
             if(!message_items[message_count].author[0]) snprintf(message_items[message_count].author,sizeof(message_items[message_count].author),"User");
             message_count++; p=end;
         } else p++;
