@@ -147,6 +147,8 @@ static u32 music_sample_rate = 0;
 static u16 music_channels = 0, music_bits = 0, music_format = 0;
 static int music_ndsp_ready = 0, music_playing = 0;
 static int music_keep_after_setup = 0, music_setup_finished = 0;
+static int music_fading_out = 0;
+static float music_volume = 1.0f;
 
 static u16 wav_u16(const u8 *p)
 {
@@ -264,6 +266,8 @@ static void music_stop(void)
     int i;
     if(music_ndsp_ready) ndspChnReset(0);
     music_playing=0;
+    music_fading_out=0;
+    music_volume=1.0f;
     if(music_file) { fclose(music_file); music_file=NULL; }
     for(i=0;i<2;i++) {
         if(music_buffers[i]) { linearFree(music_buffers[i]); music_buffers[i]=NULL; }
@@ -276,7 +280,13 @@ static void music_start(void)
     float mix[12]={1.0f,1.0f,0.0f,0.0f,0.0f,0.0f,
                    0.0f,0.0f,0.0f,0.0f,0.0f,0.0f};
     int i;
-    if(!music_ndsp_ready||music_playing) return;
+    if(!music_ndsp_ready) return;
+    if(music_playing) {
+        music_fading_out=0;
+        music_volume=1.0f;
+        ndspChnSetMix(0,mix);
+        return;
+    }
     if(!music_open_wav()) return;
     for(i=0;i<2;i++) {
         music_buffers[i]=(u8*)linearAlloc(MUSIC_BUFFER_BYTES);
@@ -289,17 +299,37 @@ static void music_start(void)
     ndspChnSetMix(0,mix);
     if(!music_fill_buffer(0)||!music_fill_buffer(1)) { music_stop(); return; }
     ndspChnSetPaused(0,false);
+    music_volume=1.0f;
+    music_fading_out=0;
     music_playing=1;
+}
+
+static void music_begin_fade(void)
+{
+    if(music_playing) music_fading_out=1;
 }
 
 static void music_update(void)
 {
     int i;
+    float mix[12]={music_volume,music_volume,0.0f,0.0f,0.0f,0.0f,
+                   0.0f,0.0f,0.0f,0.0f,0.0f,0.0f};
     if(!music_playing) return;
     for(i=0;i<2;i++) {
         if(music_wave[i].status==NDSP_WBUF_DONE)
             music_fill_buffer(i);
     }
+    if(music_fading_out) {
+        /* About 1.5 seconds at the normal 3DS frame rate. */
+        music_volume-=0.012f;
+        if(music_volume<=0.0f) {
+            music_stop();
+            return;
+        }
+    }
+    mix[0]=music_volume;
+    mix[1]=music_volume;
+    ndspChnSetMix(0,mix);
 }
 
 /* ---------------------------------------------------------
@@ -1802,7 +1832,7 @@ int main(int argc, char *argv[])
 
         if(app_state==2 && !music_setup_finished) {
             music_setup_finished=1;
-            if(!music_keep_after_setup) music_stop();
+            if(!music_keep_after_setup) music_begin_fade();
         }
         music_update();
 
@@ -1932,7 +1962,7 @@ int main(int argc, char *argv[])
                 } else if(settings_theme_touch==1) {
                     music_keep_after_setup=!music_keep_after_setup;
                     save_music_settings();
-                    if(music_keep_after_setup) music_start(); else music_stop();
+                    if(music_keep_after_setup) music_start(); else music_begin_fade();
                     selected_index=1;
                 } else if(down&KEY_B) { screen_state=settings_return_screen; }
                 else if(down&KEY_UP) { selected_index=(selected_index+1)%2; }
@@ -1942,7 +1972,7 @@ int main(int argc, char *argv[])
                     else {
                         music_keep_after_setup=!music_keep_after_setup;
                         save_music_settings();
-                        if(music_keep_after_setup) music_start(); else music_stop();
+                        if(music_keep_after_setup) music_start(); else music_begin_fade();
                     }
                 }
             } else if(screen_state==5) {
