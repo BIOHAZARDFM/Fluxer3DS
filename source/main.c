@@ -690,16 +690,18 @@ static void send_chat_message(void) {
         snprintf(sent.author,sizeof(sent.author),"%s",
                  account_name[0]?account_name:"You");
         snprintf(sent.content,sizeof(sent.content),"%s",sent_content);
-        if(message_count>0)
-            memmove(&message_items[1],&message_items[0],
-                    sizeof(ChatMessage)*(message_count<MAX_MESSAGES?message_count:MAX_MESSAGES-1));
-        message_items[0]=sent;
-        if(message_count<MAX_MESSAGES) message_count++;
+        if(message_count<MAX_MESSAGES) {
+            message_items[message_count++]=sent;
+        } else {
+            memmove(&message_items[0],&message_items[1],
+                    sizeof(ChatMessage)*(MAX_MESSAGES-1));
+            message_items[MAX_MESSAGES-1]=sent;
+        }
         sort_messages_oldest_first();
     }
     memset(message_draft,0,sizeof(message_draft));
     memset(sent_content,0,sizeof(sent_content));
-    list_offset=message_count>3?message_count-3:0;
+    list_offset=0;
     snprintf(home_status,sizeof(home_status),"Message sent.");
 }
 
@@ -1781,8 +1783,10 @@ static void render_top(void) {
         draw_aero_panel(8,7,384,36);
         draw_text(selected_channel_name,18,12,0.62f,COL_TEXT);
         draw_text(account_name,282,18,0.34f,COL_GREEN);
-        for(i=0;i<3&&i+list_offset<message_count;i++) {
-            int idx=list_offset+i; float y=49+i*56;
+        for(i=0;i<3&&i<message_count;i++) {
+            int base=message_count-3-list_offset;
+            int idx=base+i; float y=49+i*56;
+            if(idx<0) continue;
             draw_aero_panel(10,y,380,52);
             draw_text(message_items[idx].author,17,y+2,0.39f,COL_ACCENT);
             draw_wrapped_message(message_items[idx].content,17,y+14,0.36f,COL_TEXT,4);
@@ -1872,7 +1876,7 @@ int main(int argc, char *argv[])
         if(app_state==2 && screen_state==2) {
             /* Up on the Circle Pad means older messages (larger offset). */
             if(circle.dy > 60 && circle_scroll_latch != 1) {
-                int max_scroll=message_count>5?message_count-5:0;
+                int max_scroll=message_count>3?message_count-3:0;
                 if(list_offset<max_scroll) list_offset++;
                 circle_scroll_latch=1;
             } else if(circle.dy < -60 && circle_scroll_latch != -1) {
@@ -2059,8 +2063,8 @@ int main(int argc, char *argv[])
                 int max_scroll=message_count>3?message_count-3:0;
                 /* Newest messages sit at the bottom: Up reveals older history,
                    Down returns toward the newest messages. */
-                if(down&KEY_UP) { if(list_offset>0)list_offset--; }
-                else if(down&KEY_DOWN) { if(list_offset<max_scroll)list_offset++; }
+                if(down&KEY_UP) { if(list_offset<max_scroll)list_offset++; }
+                else if(down&KEY_DOWN) { if(list_offset>0)list_offset--; }
                 selected_index=list_offset;
             }
         }
