@@ -946,7 +946,7 @@ static void send_chat_message(void) {
     Result rc=api_request(HTTPC_METHOD_POST,path,body,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
     memset(escaped,0,sizeof(escaped)); memset(body,0,sizeof(body));
     if(R_FAILED(rc)||(code!=200&&code!=201)) snprintf(home_status,sizeof(home_status),"Send failed: HTTP %lu",(unsigned long)code);
-    else { memset(message_draft,0,sizeof(message_draft)); reply_message_id[0]='\0'; load_messages(item->id,item->name,active_is_dm,active_channel); }
+    else { memset(message_draft,0,sizeof(message_draft)); load_messages(item->id,item->name,active_is_dm,active_channel); }
 }
 
 /* ---------------------------------------------------------
