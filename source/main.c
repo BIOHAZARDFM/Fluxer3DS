@@ -5,18 +5,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <mpg123.h>
-#include <tremor/ivorbisfile.h>
-#include <FLAC/stream_decoder.h>
-#include <malloc.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <curl/curl.h>
 #include "altcha.h"
 
 static u32 theme_color(u8 r, u8 g, u8 b, u8 a);
-static int ui_theme_index = 0;
 static int ui_dark_mode = 0;
+static u8 theme_primary[3] = {119,202,225};
+static u8 theme_secondary[3] = {35,151,190};
+static int theme_edit_target = 0;
+static int theme_wheel_open = 0;
 
 #define API_BASE       "https://api.fluxer.app/v1"
 #define SOC_ALIGN      0x1000
@@ -65,508 +64,86 @@ static C2D_TextBuf text_buffer;
 static u32 theme_color(u8 r, u8 g, u8 b, u8 a)
 {
     int rr=r, gg=g, bb=b;
-    int luminance;
-    switch (ui_theme_index) {
-        case 1:
-            rr = (rr * 220 + 255 * 35) / 255;
-            gg = (gg * 205 + 42 * 50) / 255;
-            bb = (bb * 175 + 24 * 80) / 255;
-            break;
-        case 2:
-            rr = (rr * 190 + 115 * 65) / 255;
-            gg = (gg * 185 + 105 * 70) / 255;
-            bb = (bb * 210 + 255 * 45) / 255;
-            break;
-        case 3:
-            rr = 70 + (rr * 150) / 255;
-            gg = 112 + (gg * 132) / 255;
-            bb = 150 + (bb * 105) / 255;
-            break;
-        default: break;
+    if (g > r && b > r && b > 100) {
+        int brightness=(r*30+g*59+b*11)/100;
+        int t=brightness;
+        if(t<55)t=55;
+        if(t>235)t=235;
+        t=(t-55)*255/180;
+        rr=(theme_secondary[0]*(255-t)+theme_primary[0]*t)/255;
+        gg=(theme_secondary[1]*(255-t)+theme_primary[1]*t)/255;
+        bb=(theme_secondary[2]*(255-t)+theme_primary[2]*t)/255;
     }
     if (ui_dark_mode) {
-        /* Meadows: neutral dark-grey surfaces and readable light text. */
-        luminance = (rr * 30 + gg * 59 + bb * 11) / 100;
-        if (luminance >= 190) rr=gg=bb=58;
-        else if (luminance >= 105) rr=gg=bb=82;
+        int luminance=(rr*30+gg*59+bb*11)/100;
+        if(luminance>=190) rr=gg=bb=58;
+        else if(luminance>=105) rr=gg=bb=82;
         else rr=gg=bb=222;
-    } else {
-        /* White is the default light appearance. */
-        if (r > 180 && g > 180 && b > 180) rr=gg=bb=250;
-        else if (r < 100 && g < 130 && b < 150) { rr=35; gg=67; bb=82; }
+    } else if(r>180&&g>180&&b>180) {
+        rr=gg=bb=250;
     }
-    if (rr > 255) rr=255;
-    if (gg > 255) gg=255;
-    if (bb > 255) bb=255;
     return C2D_Color32((u8)rr,(u8)gg,(u8)bb,a);
 }
 
-
-static void load_ui_theme(void)
-{
-    FILE *f=fopen("sdmc:/3ds/Fluxer3DS/theme.dat","rb");
-    int c;
-    if (!f) return;
-    c=fgetc(f);
-    if (c>='0' && c<='3') ui_theme_index=0;
-    c=fgetc(f);
-    if (c=='0' || c=='1') ui_dark_mode=c-'0';
-    fclose(f);
-}
-
-
-/* ---------------------------------------------------------
-   SETUP MUSIC (16-bit PCM WAV streamed through NDSP)
-   --------------------------------------------------------- */
-
-#define MUSIC_FRAMES 8192
-#define MUSIC_BUFFER_BYTES (MUSIC_FRAMES * 2 * 2)
-
-static FILE *music_file = NULL;
-static mpg123_handle *music_mp3 = NULL;
-static OggVorbis_File music_ogg;
-static int music_ogg_open = 0;
-static FLAC__StreamDecoder *music_flac = NULL;
-static int music_decoder_type = 0;
-static int16_t music_flac_pcm[MUSIC_FRAMES * 2];
-static u32 music_flac_frames = 0, music_flac_pos = 0;
-static ndspWaveBuf music_wave[2];
-static u8 *music_buffers[2] = {NULL, NULL};
-static u32 music_data_start = 0, music_data_size = 0, music_data_pos = 0;
-static u32 music_sample_rate = 0;
-static u16 music_channels = 0, music_bits = 0, music_format = 0;
-static int music_ndsp_ready = 0, music_playing = 0;
-static int music_keep_after_setup = 0, music_setup_finished = 0;
-static int music_fading_out = 0;
-static float music_volume = 1.0f;
-static int music_play_all_sd = 0;
-#define MUSIC_MAX_TRACKS 128
-#define MUSIC_PATH_MAX 512
-static char music_tracks[MUSIC_MAX_TRACKS][MUSIC_PATH_MAX];
-static int music_track_count = 0, music_track_index = 0;
-static char music_current_path[MUSIC_PATH_MAX] = "sdmc:/3ds/Fluxer3DS/TITLE.WAV";
-
-static u16 wav_u16(const u8 *p)
-{
-    return (u16)(p[0] | ((u16)p[1] << 8));
-}
-
-static u32 wav_u32(const u8 *p)
-{
-    return (u32)p[0] | ((u32)p[1] << 8) |
-           ((u32)p[2] << 16) | ((u32)p[3] << 24);
-}
-
-static void save_music_settings(void)
+static void save_ui_theme(void)
 {
     FILE *f;
     mkdir("sdmc:/3ds",0777);
     mkdir("sdmc:/3ds/Fluxer3DS",0777);
-    f=fopen("sdmc:/3ds/Fluxer3DS/music.dat","wb");
-    if(!f) return;
-    fputc(music_keep_after_setup?'1':'0',f);
-    fputc(music_play_all_sd?'1':'0',f);
+    f=fopen("sdmc:/3ds/Fluxer3DS/theme.dat","wb");
+    if(!f)return;
+    fwrite(theme_primary,1,3,f);
+    fwrite(theme_secondary,1,3,f);
     fclose(f);
 }
-
-static void load_music_settings(void)
+static void load_ui_theme(void)
 {
-    FILE *f=fopen("sdmc:/3ds/Fluxer3DS/music.dat","rb");
-    int c;
-    if(!f) return;
-    c=fgetc(f);
-    if(c=='0'||c=='1') music_keep_after_setup=(c=='1');
-    c=fgetc(f);
-    if(c=='0'||c=='1') music_play_all_sd=(c=='1');
+    FILE *f=fopen("sdmc:/3ds/Fluxer3DS/theme.dat","rb");
+    u8 colors[6];
+    if(!f)return;
+    if(fread(colors,1,6,f)==6) {
+        memcpy(theme_primary,colors,3);
+        memcpy(theme_secondary,colors+3,3);
+    }
     fclose(f);
 }
-
-static int music_is_supported_audio(const char *name)
+static void hsv_to_rgb(float h,float s,u8 *r,u8 *g,u8 *b)
 {
-    const char *dot=strrchr(name,'.');
-    if(!dot) return 0;
-    return !strcasecmp(dot,".wav") || !strcasecmp(dot,".mp3") ||
-           !strcasecmp(dot,".ogg") || !strcasecmp(dot,".flac");
+    float c=s, x=c*(1.0f-fabsf(fmodf(h/60.0f,2.0f)-1.0f));
+    float rr=0,gg=0,bb=0;
+    if(h<60){rr=c;gg=x;} else if(h<120){rr=x;gg=c;}
+    else if(h<180){gg=c;bb=x;} else if(h<240){gg=x;bb=c;}
+    else if(h<300){rr=x;bb=c;} else {rr=c;bb=x;}
+    *r=(u8)(rr*255.0f); *g=(u8)(gg*255.0f); *b=(u8)(bb*255.0f);
 }
-
-static void music_scan_directory(const char *directory, int depth)
+static void draw_theme_color_wheel(void)
 {
-    DIR *dir;
-    struct dirent *entry;
-    if(depth>8 || music_track_count>=MUSIC_MAX_TRACKS) return;
-    dir=opendir(directory);
-    if(!dir) return;
-    while((entry=readdir(dir))!=NULL && music_track_count<MUSIC_MAX_TRACKS) {
-        char path[MUSIC_PATH_MAX];
-        struct stat st;
-        if(!strcmp(entry->d_name,".")||!strcmp(entry->d_name,"..")) continue;
-        /* The encrypted Nintendo 3DS data tree is huge and is not a music folder. */
-        if(depth==0 && !strcmp(entry->d_name,"Nintendo 3DS")) continue;
-        if(snprintf(path,sizeof(path),"%s/%s",directory,entry->d_name)>=(int)sizeof(path)) continue;
-        if(stat(path,&st)!=0) continue;
-        if(S_ISDIR(st.st_mode)) {
-            music_scan_directory(path,depth+1);
-        } else if(S_ISREG(st.st_mode) && music_is_supported_audio(entry->d_name)) {
-            snprintf(music_tracks[music_track_count],MUSIC_PATH_MAX,"%s",path);
-            music_track_count++;
+    int ring,step;
+    const float cx=96.0f,cy=174.0f;
+    for(ring=1;ring<=8;ring++) {
+        float sat=(float)ring/8.0f;
+        float radius=7.0f+(float)ring*7.0f;
+        for(step=0;step<72;step++) {
+            float angle=(float)step*5.0f;
+            float rad=angle*0.0174532925f;
+            u8 r,g,b;
+            hsv_to_rgb(angle,sat,&r,&g,&b);
+            C2D_DrawCircleSolid(cx+cosf(rad)*radius,cy+sinf(rad)*radius,0.0f,4.2f,C2D_Color32(r,g,b,255));
         }
     }
-    closedir(dir);
 }
-
-static void music_build_playlist(void)
+static void choose_theme_color(int x,int y)
 {
-    music_track_count=0;
-    music_track_index=0;
-    music_scan_directory("sdmc:/",0);
-    /* Keep the setup track available even if the scanner did not find it. */
-    if(music_track_count==0) {
-        snprintf(music_tracks[0],MUSIC_PATH_MAX,"sdmc:/3ds/Fluxer3DS/TITLE.WAV");
-        music_track_count=1;
-    }
+    float dx=(float)x-96.0f,dy=(float)y-174.0f;
+    float radius=sqrtf(dx*dx+dy*dy);
+    float angle=atan2f(dy,dx)*57.2957795f;
+    u8 *target=theme_edit_target?theme_secondary:theme_primary;
+    if(angle<0)angle+=360.0f;
+    if(radius>64.0f)radius=64.0f;
+    hsv_to_rgb(angle,radius/64.0f,&target[0],&target[1],&target[2]);
+    save_ui_theme();
 }
 
-static void music_start(void);
-static void music_stop(void);
-
-static void music_change_track(int direction)
-{
-    if(!music_ndsp_ready) return;
-    if(!music_play_all_sd) {
-        if(direction>0) return;
-        music_start();
-        return;
-    }
-    if(music_track_count<=0) music_build_playlist();
-    if(music_track_count<=0) return;
-    music_stop();
-    music_track_index=(music_track_index+direction+music_track_count)%music_track_count;
-    music_start();
-}
-
-static int music_open_wav(void)
-{
-    u8 chunk[12], fmt[16];
-    int have_fmt=0, have_data=0;
-    u32 chunk_size, chunk_start;
-    music_file=fopen(music_current_path,"rb");
-    if(!music_file && !music_play_all_sd) music_file=fopen("sdmc:/3ds/Fluxer3DS/title.wav","rb");
-    if(!music_file) return 0;
-
-    if(fread(chunk,1,12,music_file)!=12 ||
-       memcmp(chunk,"RIFF",4)!=0 || memcmp(chunk+8,"WAVE",4)!=0) {
-        fclose(music_file); music_file=NULL; return 0;
-    }
-
-    while(fread(chunk,1,8,music_file)==8) {
-        chunk_size=wav_u32(chunk+4);
-        chunk_start=(u32)ftell(music_file);
-        if(memcmp(chunk,"fmt ",4)==0 && chunk_size>=16) {
-            if(fread(fmt,1,16,music_file)!=16) break;
-            music_format=wav_u16(fmt);
-            music_channels=wav_u16(fmt+2);
-            music_sample_rate=wav_u32(fmt+4);
-            music_bits=wav_u16(fmt+14);
-            have_fmt=1;
-        } else if(memcmp(chunk,"data",4)==0) {
-            music_data_start=chunk_start;
-            music_data_size=chunk_size;
-            have_data=1;
-        }
-        if(have_fmt&&have_data) break;
-        if(fseek(music_file,(long)(chunk_start+chunk_size+(chunk_size&1)),SEEK_SET)!=0) break;
-    }
-
-    if(!have_fmt||!have_data||music_format!=1||music_bits!=16||
-       (music_channels!=1&&music_channels!=2)||
-       music_sample_rate<8000||music_sample_rate>48000||
-       music_data_size<(u32)(music_channels*2)) {
-        fclose(music_file); music_file=NULL; return 0;
-    }
-    music_data_pos=0;
-    return fseek(music_file,(long)music_data_start,SEEK_SET)==0;
-}
-
-static FLAC__StreamDecoderWriteStatus music_flac_write(
-    const FLAC__StreamDecoder *decoder, const FLAC__Frame *frame,
-    const FLAC__int32 * const buffer[], void *client_data)
-{
-    u32 i;
-    unsigned int channels=frame->header.channels;
-    unsigned int bits=frame->header.bits_per_sample;
-    u32 frames=frame->header.blocksize;
-    (void)decoder; (void)client_data;
-    if(channels<1 || channels>2 || frames>MUSIC_FRAMES)
-        return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
-    music_flac_frames=frames;
-    music_flac_pos=0;
-    for(i=0;i<frames;i++) {
-        int c;
-        for(c=0;c<2;c++) {
-            int32_t v=buffer[c<channels?c:0][i];
-            if(bits>16) v >>= bits-16;
-            else if(bits<16) v <<= 16-bits;
-            if(v>32767) v=32767;
-            if(v< -32768) v= -32768;
-            music_flac_pcm[i*2+c]=(int16_t)v;
-        }
-    }
-    return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
-}
-
-static void music_flac_metadata(const FLAC__StreamDecoder *decoder,
-    const FLAC__StreamMetadata *metadata, void *client_data)
-{
-    (void)decoder; (void)client_data;
-    if(metadata->type==FLAC__METADATA_TYPE_STREAMINFO) {
-        music_sample_rate=metadata->data.stream_info.sample_rate;
-        music_channels=metadata->data.stream_info.channels;
-    }
-}
-
-static void music_flac_error(const FLAC__StreamDecoder *decoder,
-    FLAC__StreamDecoderErrorStatus status, void *client_data)
-{
-    (void)decoder; (void)status; (void)client_data;
-}
-
-static void music_close_decoder(void)
-{
-    if(music_mp3) { mpg123_close(music_mp3); mpg123_delete(music_mp3); music_mp3=NULL; }
-    if(music_ogg_open) { ov_clear(&music_ogg); music_ogg_open=0; music_file=NULL; }
-    if(music_flac) {
-        FLAC__stream_decoder_finish(music_flac);
-        FLAC__stream_decoder_delete(music_flac);
-        music_flac=NULL;
-    }
-    if(music_file) { fclose(music_file); music_file=NULL; }
-    music_decoder_type=0;
-    music_flac_frames=music_flac_pos=0;
-}
-
-static int music_open_audio(void)
-{
-    const char *dot=strrchr(music_current_path,'.');
-    music_sample_rate=0; music_channels=0; music_bits=16;
-    if(!dot || !strcasecmp(dot,".wav")) {
-        if(!music_open_wav()) return 0;
-        music_decoder_type=1;
-        return 1;
-    }
-    if(!strcasecmp(dot,".mp3")) {
-        int err=0, channels=0, encoding=0;
-        long rate=0;
-        if(mpg123_init()!=MPG123_OK) return 0;
-        music_mp3=mpg123_new(NULL,&err);
-        if(!music_mp3) return 0;
-        mpg123_format_none(music_mp3);
-        mpg123_format(music_mp3,8000,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
-        mpg123_format(music_mp3,11025,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
-        mpg123_format(music_mp3,16000,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
-        mpg123_format(music_mp3,22050,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
-        mpg123_format(music_mp3,24000,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
-        mpg123_format(music_mp3,32000,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
-        mpg123_format(music_mp3,44100,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
-        mpg123_format(music_mp3,48000,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
-        if(mpg123_open(music_mp3,music_current_path)!=MPG123_OK ||
-           mpg123_getformat(music_mp3,&rate,&channels,&encoding)!=MPG123_OK ||
-           rate<8000 || rate>48000 || channels<1 || channels>2 ||
-           !(encoding&MPG123_ENC_SIGNED_16)) {
-            music_close_decoder(); return 0;
-        }
-        music_sample_rate=(u32)rate; music_channels=(u16)channels;
-        music_decoder_type=2;
-        return 1;
-    }
-    if(!strcasecmp(dot,".ogg")) {
-        music_file=fopen(music_current_path,"rb");
-        if(!music_file || ov_open(music_file,&music_ogg,NULL,0)!=0) {
-            if(music_file) fclose(music_file);
-            music_file=NULL; return 0;
-        }
-        music_ogg_open=1;
-        {
-            vorbis_info *info=ov_info(&music_ogg,-1);
-            if(!info || info->rate<8000 || info->rate>48000 ||
-               info->channels<1 || info->channels>2) {
-                music_close_decoder(); return 0;
-            }
-            music_sample_rate=(u32)info->rate;
-            music_channels=(u16)info->channels;
-        }
-        music_decoder_type=3;
-        return 1;
-    }
-    if(!strcasecmp(dot,".flac")) {
-        music_flac=FLAC__stream_decoder_new();
-        if(!music_flac) return 0;
-        if(FLAC__stream_decoder_init_file(music_flac,music_current_path,
-             music_flac_write,music_flac_metadata,music_flac_error,NULL)
-             !=FLAC__STREAM_DECODER_INIT_STATUS_OK ||
-           !FLAC__stream_decoder_process_until_end_of_metadata(music_flac) ||
-           music_sample_rate<8000 || music_sample_rate>48000 ||
-           music_channels<1 || music_channels>2) {
-            music_close_decoder(); return 0;
-        }
-        music_decoder_type=4;
-        return 1;
-    }
-    return 0;
-}
-
-static int music_read_pcm(u8 *dest, size_t capacity, size_t *bytes_read)
-{
-    size_t total=0;
-    *bytes_read=0;
-    while(total<capacity) {
-        if(music_decoder_type==1) {
-            u32 frame_bytes=(u32)music_channels*2;
-            u32 left;
-            size_t wanted,got;
-            if(music_data_pos>=music_data_size) {
-                music_data_pos=0;
-                if(fseek(music_file,(long)music_data_start,SEEK_SET)!=0) break;
-            }
-            left=music_data_size-music_data_pos;
-            wanted=capacity-total;
-            if(wanted>left) wanted=left;
-            wanted-=wanted%frame_bytes;
-            if(!wanted) { music_data_pos=music_data_size; continue; }
-            got=fread(dest+total,1,wanted,music_file);
-            got-=got%frame_bytes;
-            if(!got) { music_data_pos=music_data_size; continue; }
-            music_data_pos+=(u32)got;
-            total+=got;
-        } else if(music_decoder_type==2) {
-            size_t done=0;
-            int rc=mpg123_read(music_mp3,dest+total,capacity-total,&done);
-            total+=done;
-            if(rc==MPG123_DONE) {
-                if(mpg123_seek(music_mp3,0,SEEK_SET)<0) break;
-            } else if(rc!=MPG123_OK && rc!=MPG123_NEW_FORMAT) break;
-            if(done==0 && rc==MPG123_OK) break;
-        } else if(music_decoder_type==3) {
-            int bitstream=0;
-            long got=ov_read(&music_ogg,(char*)dest+total,(int)(capacity-total),&bitstream);
-            if(got==0) {
-                if(ov_time_seek(&music_ogg,0)!=0) break;
-            } else if(got<0) {
-                continue;
-            } else total+=(size_t)got;
-        } else if(music_decoder_type==4) {
-            if(music_flac_pos>=music_flac_frames) {
-                music_flac_frames=music_flac_pos=0;
-                if(!FLAC__stream_decoder_process_single(music_flac)) {
-                    if(!FLAC__stream_decoder_seek_absolute(music_flac,0)) break;
-                    continue;
-                }
-                if(music_flac_frames==0) {
-                    if(!FLAC__stream_decoder_seek_absolute(music_flac,0)) break;
-                    continue;
-                }
-            } else {
-                size_t avail=(size_t)(music_flac_frames-music_flac_pos)*4;
-                size_t take=capacity-total;
-                if(take>avail) take=avail;
-                take-=take%4;
-                if(!take) break;
-                memcpy(dest+total,&music_flac_pcm[music_flac_pos*2],take);
-                music_flac_pos+=(u32)(take/4);
-                total+=take;
-            }
-        } else break;
-    }
-    *bytes_read=total;
-    return total>0;
-}
-
-static int music_fill_buffer(int slot)
-{
-    size_t total=0;
-    if(!music_read_pcm(music_buffers[slot],MUSIC_BUFFER_BYTES,&total)) return 0;
-    memset(&music_wave[slot],0,sizeof(music_wave[slot]));
-    music_wave[slot].data_vaddr=music_buffers[slot];
-    music_wave[slot].nsamples=(u32)(total/((u32)music_channels*2));
-    music_wave[slot].looping=false;
-    ndspChnWaveBufAdd(0,&music_wave[slot]);
-    return 1;
-}
-
-static void music_stop(void)
-{
-    int i;
-    if(music_ndsp_ready) ndspChnReset(0);
-    music_playing=0;
-    music_fading_out=0;
-    music_volume=1.0f;
-    music_close_decoder();
-    for(i=0;i<2;i++) {
-        if(music_buffers[i]) { linearFree(music_buffers[i]); music_buffers[i]=NULL; }
-        memset(&music_wave[i],0,sizeof(music_wave[i]));
-    }
-}
-
-static void music_start(void)
-{
-    float mix[12]={1.0f,1.0f,0.0f,0.0f,0.0f,0.0f,
-                   0.0f,0.0f,0.0f,0.0f,0.0f,0.0f};
-    int i;
-    if(!music_ndsp_ready) return;
-    if(music_playing) {
-        music_fading_out=0;
-        music_volume=1.0f;
-        ndspChnSetMix(0,mix);
-        return;
-    }
-    if(music_play_all_sd) {
-        if(music_track_count<=0) music_build_playlist();
-        if(music_track_count<=0) return;
-        snprintf(music_current_path,sizeof(music_current_path),"%s",music_tracks[music_track_index]);
-    } else snprintf(music_current_path,sizeof(music_current_path),"sdmc:/3ds/Fluxer3DS/TITLE.WAV");
-    if(!music_open_audio()) return;
-    for(i=0;i<2;i++) {
-        music_buffers[i]=(u8*)linearAlloc(MUSIC_BUFFER_BYTES);
-        if(!music_buffers[i]) { music_stop(); return; }
-    }
-    ndspChnReset(0);
-    ndspChnSetInterp(0,NDSP_INTERP_LINEAR);
-    ndspChnSetRate(0,(float)music_sample_rate);
-    ndspChnSetFormat(0,music_channels==1?NDSP_FORMAT_MONO_PCM16:NDSP_FORMAT_STEREO_PCM16);
-    ndspChnSetMix(0,mix);
-    if(!music_fill_buffer(0)||!music_fill_buffer(1)) { music_stop(); return; }
-    ndspChnSetPaused(0,false);
-    music_volume=1.0f;
-    music_fading_out=0;
-    music_playing=1;
-}
-
-static void music_begin_fade(void)
-{
-    if(music_playing) music_fading_out=1;
-}
-
-static void music_update(void)
-{
-    int i;
-    float mix[12]={music_volume,music_volume,0.0f,0.0f,0.0f,0.0f,
-                   0.0f,0.0f,0.0f,0.0f,0.0f,0.0f};
-    if(!music_playing) return;
-    for(i=0;i<2;i++) {
-        if(music_wave[i].status==NDSP_WBUF_DONE)
-            music_fill_buffer(i);
-    }
-    if(music_fading_out) {
-        /* About 1.5 seconds at the normal 3DS frame rate. */
-        music_volume-=0.012f;
-        if(music_volume<=0.0f) {
-            music_stop();
-            return;
-        }
-    }
-    mix[0]=music_volume;
-    mix[1]=music_volume;
-    ndspChnSetMix(0,mix);
-}
 
 /* ---------------------------------------------------------
    GENERAL HELPERS
@@ -1887,7 +1464,7 @@ static void render_bottom(void) {
     draw_aero_background(320,240);
     draw_aero_panel(0,0,320,34);
     draw_text("fluxer",12,5,0.68f,COL_TEXT);
-    draw_text("MUSIC PLAYER",155,9,0.34f,COL_TEXT);
+    draw_text("COMMUNITY CLIENT",155,9,0.34f,COL_TEXT);
     if(app_state==2)
         draw_aero_button(230,37,82,23,screen_state==4?"BACK":"SETTINGS",theme_color(104,112,184,255));
     if(app_state!=2) {
@@ -1933,12 +1510,18 @@ static void render_bottom(void) {
         draw_aero_button(264,216,22,20,"^",COL_ACCENT);
         draw_aero_button(289,216,22,20,"v",COL_ACCENT);
     } else if(screen_state==4) {
-        draw_text("SETTINGS",14,49,0.62f,COL_TEXT);
-        draw_text("Background music",14,76,0.39f,COL_MUTED);
-        draw_aero_button(14,96,292,28,music_keep_after_setup?"[X] KEEP MUSIC AFTER SETUP":"[ ] KEEP MUSIC AFTER SETUP",selected_index==0?COL_GREEN:COL_ACCENT);
-        draw_aero_button(14,137,292,34,music_play_all_sd?"[X] PLAY ALL MUSIC ON SD":"[ ] PLAY ALL WAV FILES ON SD",selected_index==1?COL_GREEN:COL_ACCENT);
-        draw_text("L: previous song   R: next song",14,193,0.34f,COL_MUTED);
-        draw_text("A: toggle   B: back",14,229,0.30f,COL_TEXT);
+        draw_text("THEME SETTINGS",14,43,0.56f,COL_TEXT);
+        draw_text("PRIMARY THEME COLOR",14,70,0.32f,COL_MUTED);
+        draw_aero_button(14,82,132,25,"PRIMARY",theme_edit_target==0?COL_GREEN:COL_ACCENT);
+        C2D_DrawRectSolid(158,82,0.1f,38,25,C2D_Color32(theme_primary[0],theme_primary[1],theme_primary[2],255));
+        draw_text("SECONDARY THEME COLOR",14,115,0.32f,COL_MUTED);
+        draw_aero_button(14,127,132,25,"SECONDARY",theme_edit_target==1?COL_GREEN:COL_ACCENT);
+        C2D_DrawRectSolid(158,127,0.1f,38,25,C2D_Color32(theme_secondary[0],theme_secondary[1],theme_secondary[2],255));
+        draw_theme_color_wheel();
+        C2D_DrawRectSolid(205,157,0.1f,70,48,theme_edit_target?C2D_Color32(theme_secondary[0],theme_secondary[1],theme_secondary[2],255):C2D_Color32(theme_primary[0],theme_primary[1],theme_primary[2],255));
+        draw_text("COLOR PREVIEW",205,211,0.27f,COL_MUTED);
+        draw_text("Touch wheel to choose",173,76,0.29f,COL_TEXT);
+        draw_text("A: choose   B: back",14,229,0.30f,COL_TEXT);
     } else if(screen_state==2) {
         static const char *faces[]={":)",":(",":D",";)","<3",":P","xD",":O"};
         draw_text("MESSAGE COMPOSER",12,40,0.39f,theme_color(255,255,255,255));
@@ -2002,7 +1585,7 @@ static void render_top(void) {
         if(screen_state==0) { draw_text("Choose Friends to open your friend tiles,",30,155,0.42f,COL_TEXT); draw_text("or choose a community to browse its channels.",30,183,0.42f,COL_TEXT); }
         else if(screen_state==1) { draw_text("Community channels",30,155,0.48f,COL_TEXT); draw_text(home_status,30,185,0.38f,COL_MUTED); }
         else if(screen_state==3) { draw_text("Your friends",30,155,0.48f,COL_TEXT); draw_text(home_status,30,185,0.38f,COL_MUTED); }
-        else { draw_text("Music settings",30,155,0.48f,COL_TEXT); draw_text("Choose how your SD card music plays.",30,185,0.38f,COL_MUTED); }
+        else { draw_text("Theme settings",30,155,0.48f,COL_TEXT); draw_text("Choose your primary and secondary colors.",30,185,0.38f,COL_MUTED); }
     } else {
         draw_aero_panel(22,14,356,210);
         draw_text("Fluxer",38,29,0.92f,COL_TEXT);
@@ -2047,11 +1630,6 @@ int main(int argc, char *argv[])
         C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 
     load_ui_theme();
-    load_music_settings();
-    if(R_SUCCEEDED(ndspInit())) {
-        music_ndsp_ready=1;
-        music_start();
-    }
 
     ui_font = C2D_FontLoadSystem(CFG_REGION_USA);
     text_buffer = C2D_TextBufNew(16384);
@@ -2074,12 +1652,6 @@ int main(int argc, char *argv[])
     while (aptMainLoop()) {
         hidScanInput();
 
-        if(app_state==2 && !music_setup_finished) {
-            music_setup_finished=1;
-            if(!music_keep_after_setup) music_begin_fade();
-        }
-        music_update();
-
         u32 down = hidKeysDown();
         circlePosition circle;
         hidCircleRead(&circle);
@@ -2097,22 +1669,21 @@ int main(int argc, char *argv[])
             }
         }
 
-        /* L/R are dedicated music transport controls while signed in. */
-        if(app_state==2 && (down & KEY_L)) music_change_track(-1);
-        if(app_state==2 && (down & KEY_R)) music_change_track(1);
-
         touchPosition touch;
         int touched=0,tile_touched=0,tile_index=-1;
         int composer_keyboard=0,composer_emoji=0,composer_send=0;
-        int settings_touched=0,settings_music_touch=-1;
+        int settings_touched=0,settings_primary_touch=0,settings_secondary_touch=0;
         if(down&KEY_TOUCH) {
             hidTouchRead(&touch);
             if(app_state==2 && touch.py>=36 && touch.py<=60 && touch.px>=230 && touch.px<=314)
                 settings_touched=1;
-            if(app_state==2 && screen_state==4 && touch.py>=96 && touch.py<=124 && touch.px>=14 && touch.px<=306)
-                settings_music_touch=0;
-            if(app_state==2 && screen_state==4 && touch.py>=137 && touch.py<=171 && touch.px>=14 && touch.px<=306)
-                settings_music_touch=1;
+            if(app_state==2 && screen_state==4 && touch.py>=82 && touch.py<=107 && touch.px>=14 && touch.px<=196)
+                settings_primary_touch=1;
+            if(app_state==2 && screen_state==4 && touch.py>=127 && touch.py<=152 && touch.px>=14 && touch.px<=196)
+                settings_secondary_touch=1;
+            if(app_state==2 && screen_state==4 && touch.py>=102 && touch.py<=239 && touch.px>=30 && touch.px<=162) {
+                choose_theme_color(touch.px,touch.py);
+            }
             touched=touch.px>=10&&touch.px<=310&&touch.py>=185&&touch.py<=230;
             if(app_state==2&&screen_state!=2&&touch.py>=61&&touch.py<214&&touch.px>=8&&touch.px<=312) {
                 int col=touch.px<160?0:1,row=(touch.py-61)/55;
@@ -2190,19 +1761,10 @@ int main(int argc, char *argv[])
                 if(screen_state==4) { screen_state=settings_return_screen; }
                 else { settings_return_screen=screen_state; screen_state=4; selected_index=0; }
             } else if(screen_state==4) {
-                if(settings_music_touch==0 || ((down&KEY_A)&&selected_index==0)) {
-                    music_keep_after_setup=!music_keep_after_setup;
-                    save_music_settings();
-                    if(music_keep_after_setup) music_start(); else music_begin_fade();
-                    selected_index=0;
-                } else if(settings_music_touch==1 || ((down&KEY_A)&&selected_index==1)) {
-                    music_play_all_sd=!music_play_all_sd;
-                    music_stop();
-                    if(music_play_all_sd) music_build_playlist();
-                    else music_track_count=0;
-                    save_music_settings();
-                    music_start();
-                    selected_index=1;
+                if(settings_primary_touch || ((down&KEY_A)&&selected_index==0)) {
+                    theme_edit_target=0; selected_index=0;
+                } else if(settings_secondary_touch || ((down&KEY_A)&&selected_index==1)) {
+                    theme_edit_target=1; selected_index=1;
                 } else if(down&KEY_B) { screen_state=settings_return_screen; }
                 else if(down&KEY_UP) { selected_index=(selected_index+1)%2; }
                 else if(down&KEY_DOWN) { selected_index=(selected_index+1)%2; }
@@ -2298,10 +1860,6 @@ int main(int argc, char *argv[])
 
         C3D_FrameEnd(0);
     }
-
-    music_stop();
-    if(music_ndsp_ready) ndspExit();
-    music_ndsp_ready=0;
 
     memset(session_token, 0, sizeof(session_token));
     memset(mfa_ticket, 0, sizeof(mfa_ticket));
