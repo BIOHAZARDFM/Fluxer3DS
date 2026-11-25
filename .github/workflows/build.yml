@@ -30,6 +30,20 @@ jobs:
           command -v arm-none-eabi-gcc
           command -v 3dsxtool
 
+      - name: Inspect bundled title audio
+        run: |
+          python3 - <<'PY'
+          import wave
+          path = "TITLE.WAV"
+          with wave.open(path, "rb") as wav:
+              print("TITLE.WAV format: PCM")
+              print(f"Channels: {wav.getnchannels()}")
+              print(f"Sample rate: {wav.getframerate()} Hz")
+              print(f"Sample width: {wav.getsampwidth() * 8} bit")
+              print(f"Frames: {wav.getnframes()}")
+              print(f"Duration: {wav.getnframes() / wav.getframerate():.2f} seconds")
+          PY
+
       - name: Compile 3DSX
         run: |
           export PATH="$DEVKITPRO/devkitARM/bin:$DEVKITPRO/tools/bin:$PATH"
