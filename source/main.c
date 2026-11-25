@@ -2034,10 +2034,11 @@ int main(int argc, char *argv[])
                     selected_index=0;
                 } else if(settings_music_touch==1 || ((down&KEY_A)&&selected_index==1)) {
                     music_play_all_sd=!music_play_all_sd;
+                    music_stop();
                     if(music_play_all_sd) music_build_playlist();
-                    else { music_stop(); music_track_count=0; music_start(); }
+                    else music_track_count=0;
                     save_music_settings();
-                    if(music_play_all_sd) music_start();
+                    music_start();
                     selected_index=1;
                 } else if(down&KEY_B) { screen_state=settings_return_screen; }
                 else if(down&KEY_UP) { selected_index=(selected_index+1)%2; }
