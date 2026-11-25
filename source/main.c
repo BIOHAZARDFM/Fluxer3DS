@@ -206,6 +206,7 @@ static void append_utf8_codepoint(char *out, size_t cap, size_t *used,
 }
 
 
+static int json_string(const char *json,const char *key,char *out,size_t out_size);
 /* Read only direct members of a JSON object. The older strstr-based helper
    could accidentally pick "content"/"id" from nested embeds or attachments. */
 static const char *json_value_end(const char *p) {
