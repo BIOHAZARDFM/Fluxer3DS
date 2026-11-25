@@ -518,40 +518,70 @@ static void append_emoticon(const char *value) {
     if(used+add+1<sizeof(message_draft)) memcpy(message_draft+used,value,add+1);
 }
 static void send_chat_message(void) {
-    char escaped[INPUT_MAX*2],body[INPUT_MAX*2+64],path[128],detail[128];
-    static char response[HTTP_BODY_MAX];
+    /* Keep request storage off the small 3DS application stack. */
+    static char escaped[INPUT_MAX*2];
+    static char body[INPUT_MAX*2+64];
+    static char path[128];
+    static char detail[128];
+    static char response[16384];
+    static char sent_content[INPUT_MAX];
+    static char channel_id[32];
     u32 code=0;
-    ChatItem *item;
+    Result rc;
     int item_count=active_is_dm?dm_count:channel_count;
     if(active_channel<0||active_channel>=item_count) {
         snprintf(home_status,sizeof(home_status),"No channel is selected.");
         return;
     }
-    item=active_is_dm?&dm_items[active_channel]:&channel_items[active_channel];
-    if(!item->id[0]) {
-        snprintf(home_status,sizeof(home_status),"This channel has no valid ID.");
-        return;
+    {
+        ChatItem *item=active_is_dm?&dm_items[active_channel]:&channel_items[active_channel];
+        if(!item->id[0]) {
+            snprintf(home_status,sizeof(home_status),"This channel has no valid ID.");
+            return;
+        }
+        snprintf(channel_id,sizeof(channel_id),"%s",item->id);
     }
     if(!message_draft[0]) {
         snprintf(home_status,sizeof(home_status),"Write a message first.");
         return;
     }
-    if(!json_escape(message_draft,escaped,sizeof(escaped))) {
+    snprintf(sent_content,sizeof(sent_content),"%s",message_draft);
+    if(!json_escape(sent_content,escaped,sizeof(escaped))) {
         snprintf(home_status,sizeof(home_status),"Message could not be encoded.");
         return;
     }
     snprintf(body,sizeof(body),"{\"content\":\"%s\"}",escaped);
-    snprintf(path,sizeof(path),"/channels/%s/messages",item->id);
-    memset(response,0,sizeof(response));
-    Result rc=api_request(HTTPC_METHOD_POST,path,body,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
+    snprintf(path,sizeof(path),"/channels/%s/messages",channel_id);
+    response[0]='\\0';
+    detail[0]='\\0';
+    rc=api_request(HTTPC_METHOD_POST,path,body,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
     memset(escaped,0,sizeof(escaped));
     memset(body,0,sizeof(body));
-    if(R_FAILED(rc)||(code!=200&&code!=201))
+    if(R_FAILED(rc)||(code!=200&&code!=201)) {
         snprintf(home_status,sizeof(home_status),"Send failed: HTTP %lu",(unsigned long)code);
-    else {
-        memset(message_draft,0,sizeof(message_draft));
-        load_messages(item->id,item->name,active_is_dm,active_channel);
+        if(detail[0]) snprintf(home_status,sizeof(home_status),"Send failed: %.110s",detail);
+        memset(sent_content,0,sizeof(sent_content));
+        return;
     }
+
+    /* Do not issue a second HTTPS request inside the send action.
+       Add the confirmed message locally; reopening the channel refreshes history. */
+    if(message_count>=MAX_MESSAGES) {
+        memmove(&message_items[0],&message_items[1],
+                sizeof(ChatMessage)*(MAX_MESSAGES-1));
+        message_count=MAX_MESSAGES-1;
+    }
+    memset(&message_items[message_count],0,sizeof(ChatMessage));
+    snprintf(message_items[message_count].author,
+             sizeof(message_items[message_count].author),"%s",
+             account_name[0]?account_name:"You");
+    snprintf(message_items[message_count].content,
+             sizeof(message_items[message_count].content),"%s",sent_content);
+    message_count++;
+    memset(message_draft,0,sizeof(message_draft));
+    memset(sent_content,0,sizeof(sent_content));
+    list_offset=0;
+    snprintf(home_status,sizeof(home_status),"Message sent.");
 }
 
 /* ---------------------------------------------------------
@@ -1594,6 +1624,37 @@ static void draw_login_spinner(float cx, float cy) {
     }
 }
 
+static void draw_wrapped_message(const char *value,float x,float y,
+                                  float scale,u32 color,int max_lines) {
+    const int max_chars=60;
+    const char *p=value?value:"";
+    int line=0;
+    while(*p && line<max_lines) {
+        char part[80];
+        int n=0,last_space=-1;
+        const char *start=p;
+        while(*p && *p!='\\n' && n<max_chars) {
+            if(*p==' ') last_space=n;
+            p++; n++;
+        }
+        if(*p && *p!='\\n' && n==max_chars && last_space>0) {
+            p=start+last_space;
+            n=last_space;
+        }
+        if(n<=0 && *p=='\\n') { p++; line++; continue; }
+        if(n>=(int)sizeof(part)) n=(int)sizeof(part)-1;
+        memcpy(part,start,(size_t)n);
+        part[n]='\\0';
+        if(line==max_lines-1 && (p[0] && p[0]!='\\n')) {
+            if(n>3) { part[n-3]='.'; part[n-2]='.'; part[n-1]='.'; }
+        }
+        draw_text(part,x,y+(float)line*9.0f,scale,color);
+        line++;
+        if(*p==' ') p++;
+        else if(*p=='\\n') p++;
+    }
+}
+
 static void render_top(void) {
     int i;
     draw_aero_background(400,240);
@@ -1601,11 +1662,11 @@ static void render_top(void) {
         draw_aero_panel(8,7,384,36);
         draw_text(selected_channel_name,18,12,0.62f,COL_TEXT);
         draw_text(account_name,282,18,0.34f,COL_GREEN);
-        for(i=0;i<5&&i+list_offset<message_count;i++) {
-            int idx=message_count-1-(i+list_offset); float y=51+i*34;
-            draw_aero_panel(10,y,380,30);
-            draw_text(message_items[idx].author,17,y+2,0.40f,COL_ACCENT);
-            draw_text(message_items[idx].content,116,y+3,0.39f,COL_TEXT);
+        for(i=0;i<3&&i+list_offset<message_count;i++) {
+            int idx=message_count-1-(i+list_offset); float y=49+i*56;
+            draw_aero_panel(10,y,380,52);
+            draw_text(message_items[idx].author,17,y+2,0.39f,COL_ACCENT);
+            draw_wrapped_message(message_items[idx].content,17,y+14,0.36f,COL_TEXT,4);
         }
         draw_text(home_status,14,190,0.34f,theme_color(255,255,255,255));
         draw_text("Circle Pad: scroll   B: tiles",14,213,0.34f,theme_color(255,255,255,255));
