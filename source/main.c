@@ -6,7 +6,7 @@
 #include <string.h>
 #include <strings.h>
 #include <mpg123.h>
-#include <ivorbisfile.h>
+#include <tremor/ivorbisfile.h>
 #include <FLAC/stream_decoder.h>
 #include <malloc.h>
 #include <sys/stat.h>
