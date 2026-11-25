@@ -1784,7 +1784,7 @@ static void render_top(void) {
         draw_text(selected_channel_name,18,12,0.62f,COL_TEXT);
         draw_text(account_name,282,18,0.34f,COL_GREEN);
         for(i=0;i<3&&i<message_count;i++) {
-            int base=message_count-3-list_offset;
+            int base=(message_count>3?message_count-3:0)-list_offset;
             int idx=base+i; float y=49+i*56;
             if(idx<0) continue;
             draw_aero_panel(10,y,380,52);
