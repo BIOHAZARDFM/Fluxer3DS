@@ -1782,7 +1782,7 @@ static void render_top(void) {
         draw_text(selected_channel_name,18,12,0.62f,COL_TEXT);
         draw_text(account_name,282,18,0.34f,COL_GREEN);
         for(i=0;i<3&&i+list_offset<message_count;i++) {
-            int idx=message_count-1-(list_offset+i); float y=49+i*56;
+            int idx=list_offset+i; float y=49+i*56;
             draw_aero_panel(10,y,380,52);
             draw_text(message_items[idx].author,17,y+2,0.39f,COL_ACCENT);
             draw_wrapped_message(message_items[idx].content,17,y+14,0.36f,COL_TEXT,4);
