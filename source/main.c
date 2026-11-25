@@ -480,6 +480,21 @@ static void load_guild_channels(int index) {
             snprintf(home_status,sizeof(home_status),"%d channels and categories",channel_count);
     }
 }
+/* Fluxer message IDs are decimal snowflakes. Keep newest messages first. */
+static void sort_messages_newest_first(void) {
+    int i,j;
+    for(i=1;i<message_count;i++) {
+        ChatMessage item=message_items[i];
+        j=i-1;
+        while(j>=0 && item.id[0] && message_items[j].id[0] &&
+              strcmp(message_items[j].id,item.id)<0) {
+            message_items[j+1]=message_items[j];
+            j--;
+        }
+        message_items[j+1]=item;
+    }
+}
+
 static void load_messages(const char *channel_id,const char *name,int is_dm,int index) {
     static char response[MESSAGE_BODY_MAX]; char path[128],detail[128]; u32 code=0; const char *p;
     snprintf(path,sizeof(path),"/channels/%s/messages?limit=50",channel_id);
@@ -502,6 +517,7 @@ static void load_messages(const char *channel_id,const char *name,int is_dm,int 
             message_count++; p=end;
         } else p++;
     }
+    sort_messages_newest_first();
     chat_return_screen=screen_state; chat_return_selection=selected_index;
     active_channel=index; active_is_dm=is_dm; screen_state=2; selected_index=0; list_offset=0; emoji_panel_open=0;
     snprintf(selected_channel_name,sizeof(selected_channel_name),"%s",name);
@@ -571,13 +587,20 @@ static void send_chat_message(void) {
                 sizeof(ChatMessage)*(MAX_MESSAGES-1));
         message_count=MAX_MESSAGES-1;
     }
-    memset(&message_items[message_count],0,sizeof(ChatMessage));
-    snprintf(message_items[message_count].author,
-             sizeof(message_items[message_count].author),"%s",
-             account_name[0]?account_name:"You");
-    snprintf(message_items[message_count].content,
-             sizeof(message_items[message_count].content),"%s",sent_content);
-    message_count++;
+    {
+        ChatMessage sent;
+        memset(&sent,0,sizeof(sent));
+        json_string(response,"id",sent.id,sizeof(sent.id));
+        snprintf(sent.author,sizeof(sent.author),"%s",
+                 account_name[0]?account_name:"You");
+        snprintf(sent.content,sizeof(sent.content),"%s",sent_content);
+        if(message_count>0)
+            memmove(&message_items[1],&message_items[0],
+                    sizeof(ChatMessage)*message_count);
+        message_items[0]=sent;
+        if(message_count<MAX_MESSAGES) message_count++;
+        sort_messages_newest_first();
+    }
     memset(message_draft,0,sizeof(message_draft));
     memset(sent_content,0,sizeof(sent_content));
     list_offset=0;
@@ -1663,7 +1686,7 @@ static void render_top(void) {
         draw_text(selected_channel_name,18,12,0.62f,COL_TEXT);
         draw_text(account_name,282,18,0.34f,COL_GREEN);
         for(i=0;i<3&&i+list_offset<message_count;i++) {
-            int idx=message_count-1-(i+list_offset); float y=49+i*56;
+            int idx=i+list_offset; float y=49+i*56;
             draw_aero_panel(10,y,380,52);
             draw_text(message_items[idx].author,17,y+2,0.39f,COL_ACCENT);
             draw_wrapped_message(message_items[idx].content,17,y+14,0.36f,COL_TEXT,4);
