@@ -17,10 +17,6 @@
 static u32 theme_color(u8 r, u8 g, u8 b, u8 a);
 static int ui_theme_index = 0;
 static int ui_dark_mode = 0;
-static float cursor_x = 200.0f, cursor_y = 120.0f;
-static int selected_message_index = -1;
-static int message_action_index = 0;
-static char reply_message_id[32] = "";
 
 #define API_BASE       "https://api.fluxer.app/v1"
 #define SOC_ALIGN      0x1000
@@ -1946,14 +1942,6 @@ static void render_bottom(void) {
         draw_aero_button(14,137,292,34,music_play_all_sd?"[X] PLAY ALL MUSIC ON SD":"[ ] PLAY ALL WAV FILES ON SD",selected_index==1?COL_GREEN:COL_ACCENT);
         draw_text("L: previous song   R: next song",14,193,0.34f,COL_MUTED);
         draw_text("A: toggle   B: back",14,229,0.30f,COL_TEXT);
-    } else if(screen_state==5) {
-        static const char *actions[]={"Reply","Heart","Thumbs up","Thumbs down","Laugh","Sad"};
-        draw_text("MESSAGE ACTIONS",14,48,0.58f,COL_TEXT);
-        draw_text("Choose what to do with this message",14,76,0.34f,COL_MUTED);
-        for(i=0;i<6;i++)
-            draw_aero_button(14,96+i*22,292,20,actions[i],
-                i==message_action_index?COL_GREEN:COL_ACCENT);
-        draw_text("A: confirm   B: cancel",14,229,0.30f,COL_TEXT);
     } else if(screen_state==2) {
         static const char *faces[]={":)",":(",":D",";)","<3",":P","xD",":O"};
         draw_text("MESSAGE COMPOSER",12,40,0.39f,theme_color(255,255,255,255));
@@ -1996,7 +1984,7 @@ static void draw_login_spinner(float cx, float cy) {
 static void render_top(void) {
     int i;
     draw_aero_background(400,240);
-    if(app_state==2&&(screen_state==2||screen_state==5)) {
+    if(app_state==2&&screen_state==2) {
         draw_aero_panel(8,7,384,36);
         draw_text(selected_channel_name,18,12,0.62f,COL_TEXT);
         draw_text(account_name,282,18,0.34f,COL_GREEN);
@@ -2007,7 +1995,7 @@ static void render_top(void) {
             draw_text(message_items[idx].content,116,y+3,0.39f,COL_TEXT);
         }
         draw_text(home_status,14,190,0.34f,theme_color(255,255,255,255));
-        draw_text("Circle Pad: cursor   A: message actions   B: tiles",14,213,0.34f,theme_color(255,255,255,255));
+        draw_text("Circle Pad: scroll   B: tiles",14,213,0.34f,theme_color(255,255,255,255));
     } else if(app_state==2) {
         draw_aero_panel(14,12,372,212);
         draw_text("FLUXER",28,25,0.86f,COL_TEXT);
@@ -2031,11 +2019,6 @@ static void render_top(void) {
             draw_text("Sign in to your Fluxer account",38,139,0.46f,COL_TEXT);
             draw_text("Secure connection  |  HTTPS",38,172,0.38f,COL_MUTED);
         }
-    }
-    if(app_state==2 && (screen_state==2||screen_state==5)) {
-        C2D_DrawCircleSolid(cursor_x,cursor_y,0.2f,5.0f,theme_color(255,255,255,255));
-        C2D_DrawRectSolid(cursor_x-8,cursor_y-1,0.1f,16,2,theme_color(20,80,110,255));
-        C2D_DrawRectSolid(cursor_x-1,cursor_y-8,0.1f,2,16,theme_color(20,80,110,255));
     }
 }
 
@@ -2103,9 +2086,7 @@ int main(int argc, char *argv[])
         u32 down = hidKeysDown();
         circlePosition circle;
         hidCircleRead(&circle);
-        if(app_state==2 && (screen_state==2||screen_state==5)) {
-            cursor_x += ((float)circle.dx / 156.0f) * 5.0f;
-            cursor_y -= ((float)circle.dy / 156.0f) * 5.0f;
+        if(app_state==2 && screen_state==2) {
             /* Up on the Circle Pad means older messages (larger offset). */
             if(circle.dy > 60 && circle_scroll_latch != 1) {
                 int max_scroll=message_count>5?message_count-5:0;
@@ -2117,10 +2098,6 @@ int main(int argc, char *argv[])
             } else if(circle.dy > -20 && circle.dy < 20) {
                 circle_scroll_latch=0;
             }
-            if(cursor_x<4) cursor_x=4;
-            if(cursor_x>396) cursor_x=396;
-            if(cursor_y<4) cursor_y=4;
-            if(cursor_y>236) cursor_y=236;
         }
 
         /* L/R are dedicated music transport controls while signed in. */
@@ -2130,7 +2107,7 @@ int main(int argc, char *argv[])
         touchPosition touch;
         int touched=0,tile_touched=0,tile_index=-1;
         int composer_keyboard=0,composer_emoji=0,composer_send=0;
-        int settings_touched=0,settings_music_touch=-1,message_action_confirm=0;
+        int settings_touched=0,settings_music_touch=-1;
         if(down&KEY_TOUCH) {
             hidTouchRead(&touch);
             if(app_state==2 && touch.py>=36 && touch.py<=60 && touch.px>=230 && touch.px<=314)
@@ -2139,11 +2116,6 @@ int main(int argc, char *argv[])
                 settings_music_touch=0;
             if(app_state==2 && screen_state==4 && touch.py>=137 && touch.py<=171 && touch.px>=14 && touch.px<=306)
                 settings_music_touch=1;
-            if(app_state==2 && screen_state==5 && touch.py>=96 && touch.py<228 && touch.px>=14 && touch.px<=306) {
-                message_action_index=(touch.py-96)/22;
-                if(message_action_index>5) message_action_index=5;
-                message_action_confirm=1;
-            }
             touched=touch.px>=10&&touch.px<=310&&touch.py>=185&&touch.py<=230;
             if(app_state==2&&screen_state!=2&&touch.py>=61&&touch.py<214&&touch.px>=8&&touch.px<=312) {
                 int col=touch.px<160?0:1,row=(touch.py-61)/55;
@@ -2237,29 +2209,6 @@ int main(int argc, char *argv[])
                 } else if(down&KEY_B) { screen_state=settings_return_screen; }
                 else if(down&KEY_UP) { selected_index=(selected_index+1)%2; }
                 else if(down&KEY_DOWN) { selected_index=(selected_index+1)%2; }
-            } else if(screen_state==5) {
-                if(down&KEY_B) { screen_state=2; }
-                else if(down&KEY_UP) { if(message_action_index>0) message_action_index--; }
-                else if(down&KEY_DOWN) { if(message_action_index<5) message_action_index++; }
-                else if((down&KEY_A)||message_action_confirm) {
-                    if(selected_message_index>=0 && selected_message_index<message_count) {
-                        ChatItem *active_item=active_is_dm?&dm_items[active_channel]:&channel_items[active_channel];
-                        if(message_action_index==0) {
-                            snprintf(reply_message_id,sizeof(reply_message_id),"%s",message_items[selected_message_index].id);
-                            screen_state=2;
-                            open_message_keyboard();
-                        } else {
-                            static const char *encoded_reactions[]={"%E2%9D%A4%EF%B8%8F","%F0%9F%91%8D","%F0%9F%91%8E","%F0%9F%98%82","%F0%9F%98%A2"};
-                            char reaction_path[256],reaction_response[1024],reaction_detail[128]; u32 reaction_code=0;
-                            snprintf(reaction_path,sizeof(reaction_path),"/channels/%s/messages/%s/reactions/%s/@me",active_item->id,message_items[selected_message_index].id,encoded_reactions[message_action_index-1]);
-                            Result reaction_rc=api_request(HTTPC_METHOD_PUT,reaction_path,NULL,session_token,NULL,reaction_response,sizeof(reaction_response),&reaction_code,reaction_detail,sizeof(reaction_detail));
-                            if(R_FAILED(reaction_rc)||(reaction_code!=200&&reaction_code!=204))
-                                snprintf(home_status,sizeof(home_status),"Reaction failed: HTTP %lu",(unsigned long)reaction_code);
-                            else snprintf(home_status,sizeof(home_status),"Reaction added.");
-                            screen_state=2;
-                        }
-                    } else screen_state=2;
-                }
             } else if(down&KEY_X) {
                 if(screen_state==2) emoji_panel_open=!emoji_panel_open;
                 else {
