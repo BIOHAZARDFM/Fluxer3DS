@@ -1750,27 +1750,56 @@ static void draw_wrapped_message(const char *value,float x,float y,
     const int max_chars=60;
     const char *p=value?value:"";
     int line=0;
+
+    if(max_lines<=0) return;
+
     while(*p && line<max_lines) {
         char part[80];
-        int n=0,last_space=-1;
         const char *start=p;
+        int n=0,last_space=-1;
+
+        /* A newline always ends the current line; spaces are preferred
+           break points when a line reaches its width limit. */
         while(*p && *p!='\n' && n<max_chars) {
             if(*p==' ') last_space=n;
-            p++; n++;
+            p++;
+            n++;
         }
-        if(*p && *p!='\n' && n==max_chars && last_space>0) {
-            p=start+last_space;
-            n=last_space;
+
+        if(*p && *p!='\n' && n==max_chars) {
+            if(last_space>0) {
+                n=last_space;
+                p=start+n;
+            } else {
+                /* Never split a UTF-8 character in the middle. */
+                while(n>0 && (((unsigned char)start[n]&0xC0)==0x80))
+                    n--;
+                p=start+n;
+            }
         }
-        if(n<=0 && *p=='\n') { p++; line++; continue; }
+
+        if(n==0 && *p=='\n') {
+            p++;
+            line++;
+            continue;
+        }
+
+        while(n>0 && start[n-1]==' ') n--;
         if(n>=(int)sizeof(part)) n=(int)sizeof(part)-1;
         memcpy(part,start,(size_t)n);
-        part[n]='\\0';
-        if(line==max_lines-1 && (p[0] && p[0]!='\n')) {
-            if(n>3) { part[n-3]='.'; part[n-2]='.'; part[n-1]='.'; }
+        part[n]='\0';
+
+        if(line==max_lines-1 && p[0] && p[0]!='\n') {
+            if(n>3) {
+                part[n-3]='.';
+                part[n-2]='.';
+                part[n-1]='.';
+            }
         }
+
         draw_text(part,x,y+(float)line*9.0f,scale,color);
         line++;
+
         if(*p==' ') p++;
         else if(*p=='\n') p++;
     }
