@@ -6,6 +6,7 @@
 #include <string.h>
 #include <malloc.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <curl/curl.h>
 #include "altcha.h"
 
@@ -125,12 +126,6 @@ static void load_ui_theme(void)
     fclose(f);
 }
 
-static void cycle_ui_theme(int direction)
-{
-    (void)direction;
-    ui_dark_mode=!ui_dark_mode;
-    save_ui_theme();
-}
 
 /* ---------------------------------------------------------
    SETUP MUSIC (16-bit PCM WAV streamed through NDSP)
@@ -149,6 +144,12 @@ static int music_ndsp_ready = 0, music_playing = 0;
 static int music_keep_after_setup = 0, music_setup_finished = 0;
 static int music_fading_out = 0;
 static float music_volume = 1.0f;
+static int music_play_all_sd = 0;
+#define MUSIC_MAX_TRACKS 128
+#define MUSIC_PATH_MAX 512
+static char music_tracks[MUSIC_MAX_TRACKS][MUSIC_PATH_MAX];
+static int music_track_count = 0, music_track_index = 0;
+static char music_current_path[MUSIC_PATH_MAX] = "sdmc:/3ds/Fluxer3DS/TITLE.WAV";
 
 static u16 wav_u16(const u8 *p)
 {
@@ -169,6 +170,7 @@ static void save_music_settings(void)
     f=fopen("sdmc:/3ds/Fluxer3DS/music.dat","wb");
     if(!f) return;
     fputc(music_keep_after_setup?'1':'0',f);
+    fputc(music_play_all_sd?'1':'0',f);
     fclose(f);
 }
 
@@ -179,7 +181,71 @@ static void load_music_settings(void)
     if(!f) return;
     c=fgetc(f);
     if(c=='0'||c=='1') music_keep_after_setup=(c=='1');
+    c=fgetc(f);
+    if(c=='0'||c=='1') music_play_all_sd=(c=='1');
     fclose(f);
+}
+
+static int music_is_wav(const char *name)
+{
+    size_t n=strlen(name);
+    if(n<4) return 0;
+    return name[n-4]=='.' &&
+        (name[n-3]=='w'||name[n-3]=='W') &&
+        (name[n-2]=='a'||name[n-2]=='A') &&
+        (name[n-1]=='v'||name[n-1]=='V');
+}
+
+static void music_scan_directory(const char *directory, int depth)
+{
+    DIR *dir;
+    struct dirent *entry;
+    if(depth>8 || music_track_count>=MUSIC_MAX_TRACKS) return;
+    dir=opendir(directory);
+    if(!dir) return;
+    while((entry=readdir(dir))!=NULL && music_track_count<MUSIC_MAX_TRACKS) {
+        char path[MUSIC_PATH_MAX];
+        struct stat st;
+        if(!strcmp(entry->d_name,".")||!strcmp(entry->d_name,"..")) continue;
+        /* The encrypted Nintendo 3DS data tree is huge and is not a music folder. */
+        if(depth==0 && !strcmp(entry->d_name,"Nintendo 3DS")) continue;
+        if(snprintf(path,sizeof(path),"%s/%s",directory,entry->d_name)>=(int)sizeof(path)) continue;
+        if(stat(path,&st)!=0) continue;
+        if(S_ISDIR(st.st_mode)) {
+            music_scan_directory(path,depth+1);
+        } else if(S_ISREG(st.st_mode) && music_is_wav(entry->d_name)) {
+            snprintf(music_tracks[music_track_count],MUSIC_PATH_MAX,"%s",path);
+            music_track_count++;
+        }
+    }
+    closedir(dir);
+}
+
+static void music_build_playlist(void)
+{
+    music_track_count=0;
+    music_track_index=0;
+    music_scan_directory("sdmc:/",0);
+    /* Keep the setup track available even if the scanner did not find it. */
+    if(music_track_count==0) {
+        snprintf(music_tracks[0],MUSIC_PATH_MAX,"sdmc:/3ds/Fluxer3DS/TITLE.WAV");
+        music_track_count=1;
+    }
+}
+
+static void music_change_track(int direction)
+{
+    if(!music_ndsp_ready) return;
+    if(!music_play_all_sd) {
+        if(direction>0) return;
+        music_start();
+        return;
+    }
+    if(music_track_count<=0) music_build_playlist();
+    if(music_track_count<=0) return;
+    music_stop();
+    music_track_index=(music_track_index+direction+music_track_count)%music_track_count;
+    music_start();
 }
 
 static int music_open_wav(void)
@@ -187,8 +253,8 @@ static int music_open_wav(void)
     u8 chunk[12], fmt[16];
     int have_fmt=0, have_data=0;
     u32 chunk_size, chunk_start;
-    music_file=fopen("sdmc:/3ds/Fluxer3DS/TITLE.WAV","rb");
-    if(!music_file) music_file=fopen("sdmc:/3ds/Fluxer3DS/title.wav","rb");
+    music_file=fopen(music_current_path,"rb");
+    if(!music_file && !music_play_all_sd) music_file=fopen("sdmc:/3ds/Fluxer3DS/title.wav","rb");
     if(!music_file) return 0;
 
     if(fread(chunk,1,12,music_file)!=12 ||
@@ -287,6 +353,11 @@ static void music_start(void)
         ndspChnSetMix(0,mix);
         return;
     }
+    if(music_play_all_sd) {
+        if(music_track_count<=0) music_build_playlist();
+        if(music_track_count<=0) return;
+        snprintf(music_current_path,sizeof(music_current_path),"%s",music_tracks[music_track_index]);
+    } else snprintf(music_current_path,sizeof(music_current_path),"sdmc:/3ds/Fluxer3DS/TITLE.WAV");
     if(!music_open_wav()) return;
     for(i=0;i<2;i++) {
         music_buffers[i]=(u8*)linearAlloc(MUSIC_BUFFER_BYTES);
@@ -1654,8 +1725,7 @@ static void render_bottom(void) {
     draw_aero_background(320,240);
     draw_aero_panel(0,0,320,34);
     draw_text("fluxer",12,5,0.68f,COL_TEXT);
-    draw_text(ui_dark_mode?"MEADOWS":"WHITE",155,9,0.34f,COL_TEXT);
-    draw_text("< L/R >",210,9,0.27f,COL_MUTED);
+    draw_text("MUSIC PLAYER",155,9,0.34f,COL_TEXT);
     if(app_state==2)
         draw_aero_button(230,37,82,23,screen_state==4?"BACK":"SETTINGS",theme_color(104,112,184,255));
     if(app_state!=2) {
@@ -1697,15 +1767,15 @@ static void render_bottom(void) {
             } else { snprintf(label,sizeof(label),"%s",friend_items[idx].name); snprintf(symbol,sizeof(symbol),"@"); }
             draw_aero_tile(x,y,146,48,symbol,label,idx==selected_index);
         }
-        draw_text("D-pad: move   A: open   B: back   L/R: theme",10,224,0.26f,theme_color(255,255,255,255));
+        draw_text("D-pad: move   A: open   B: back   L: prev   R: next",8,224,0.24f,theme_color(255,255,255,255));
         draw_aero_button(264,216,22,20,"^",COL_ACCENT);
         draw_aero_button(289,216,22,20,"v",COL_ACCENT);
     } else if(screen_state==4) {
         draw_text("SETTINGS",14,49,0.62f,COL_TEXT);
-        draw_text("Appearance",14,76,0.39f,COL_MUTED);
-        draw_aero_button(14,96,292,28,ui_dark_mode?"MEADOWS":"WHITE",selected_index==0?COL_GREEN:COL_ACCENT);
-        draw_text("Background music",14,133,0.39f,COL_MUTED);
-        draw_aero_button(14,153,292,28,music_keep_after_setup?"[X] KEEP MUSIC AFTER SETUP":"[ ] KEEP MUSIC AFTER SETUP",selected_index==1?COL_GREEN:COL_ACCENT);
+        draw_text("Background music",14,76,0.39f,COL_MUTED);
+        draw_aero_button(14,96,292,28,music_keep_after_setup?"[X] KEEP MUSIC AFTER SETUP":"[ ] KEEP MUSIC AFTER SETUP",selected_index==0?COL_GREEN:COL_ACCENT);
+        draw_aero_button(14,137,292,34,music_play_all_sd?"[X] PLAY ALL WAV FILES ON SD":"[ ] PLAY ALL WAV FILES ON SD",selected_index==1?COL_GREEN:COL_ACCENT);
+        draw_text("L: previous song   R: next song",14,193,0.34f,COL_MUTED);
         draw_text("A: toggle   B: back",14,229,0.30f,COL_TEXT);
     } else if(screen_state==5) {
         static const char *actions[]={"Reply","Heart","Thumbs up","Thumbs down","Laugh","Sad"};
@@ -1764,7 +1834,7 @@ static void render_top(void) {
         if(screen_state==0) { draw_text("Choose Friends to open your friend tiles,",30,155,0.42f,COL_TEXT); draw_text("or choose a community to browse its channels.",30,183,0.42f,COL_TEXT); }
         else if(screen_state==1) { draw_text("Community channels",30,155,0.48f,COL_TEXT); draw_text(home_status,30,185,0.38f,COL_MUTED); }
         else if(screen_state==3) { draw_text("Your friends",30,155,0.48f,COL_TEXT); draw_text(home_status,30,185,0.38f,COL_MUTED); }
-        else { draw_text("Interface settings",30,155,0.48f,COL_TEXT); draw_text("Select a theme on the lower screen.",30,185,0.38f,COL_MUTED); }
+        else { draw_text("Music settings",30,155,0.48f,COL_TEXT); draw_text("Choose how your SD card music plays.",30,185,0.38f,COL_MUTED); }
     } else {
         draw_aero_panel(22,14,356,210);
         draw_text("FLUXER 3DS",38,29,0.8f,COL_TEXT);
@@ -1859,22 +1929,22 @@ int main(int argc, char *argv[])
             if(cursor_y>236) cursor_y=236;
         }
 
-        /* Shoulder buttons cycle the visual theme without leaving the chat. */
-        if (app_state == 2 && (down & KEY_L)) cycle_ui_theme(-1);
-        if (app_state == 2 && (down & KEY_R)) cycle_ui_theme(1);
+        /* L/R are dedicated music transport controls while signed in. */
+        if(app_state==2 && (down & KEY_L)) music_change_track(-1);
+        if(app_state==2 && (down & KEY_R)) music_change_track(1);
 
         touchPosition touch;
         int touched=0,tile_touched=0,tile_index=-1;
         int composer_keyboard=0,composer_emoji=0,composer_send=0;
-        int settings_touched=0,settings_theme_touch=-1,message_action_confirm=0;
+        int settings_touched=0,settings_music_touch=-1,message_action_confirm=0;
         if(down&KEY_TOUCH) {
             hidTouchRead(&touch);
             if(app_state==2 && touch.py>=36 && touch.py<=60 && touch.px>=230 && touch.px<=314)
                 settings_touched=1;
             if(app_state==2 && screen_state==4 && touch.py>=96 && touch.py<=124 && touch.px>=14 && touch.px<=306)
-                settings_theme_touch=0;
-            if(app_state==2 && screen_state==4 && touch.py>=153 && touch.py<=181 && touch.px>=14 && touch.px<=306)
-                settings_theme_touch=1;
+                settings_music_touch=0;
+            if(app_state==2 && screen_state==4 && touch.py>=137 && touch.py<=171 && touch.px>=14 && touch.px<=306)
+                settings_music_touch=1;
             if(app_state==2 && screen_state==5 && touch.py>=96 && touch.py<228 && touch.px>=14 && touch.px<=306) {
                 message_action_index=(touch.py-96)/22;
                 if(message_action_index>5) message_action_index=5;
@@ -1957,24 +2027,21 @@ int main(int argc, char *argv[])
                 if(screen_state==4) { screen_state=settings_return_screen; }
                 else { settings_return_screen=screen_state; screen_state=4; selected_index=0; }
             } else if(screen_state==4) {
-                if(settings_theme_touch==0) {
-                    ui_dark_mode=!ui_dark_mode; save_ui_theme(); selected_index=0;
-                } else if(settings_theme_touch==1) {
+                if(settings_music_touch==0 || ((down&KEY_A)&&selected_index==0)) {
                     music_keep_after_setup=!music_keep_after_setup;
                     save_music_settings();
                     if(music_keep_after_setup) music_start(); else music_begin_fade();
+                    selected_index=0;
+                } else if(settings_music_touch==1 || ((down&KEY_A)&&selected_index==1)) {
+                    music_play_all_sd=!music_play_all_sd;
+                    if(music_play_all_sd) music_build_playlist();
+                    else { music_stop(); music_track_count=0; music_start(); }
+                    save_music_settings();
+                    if(music_play_all_sd) music_start();
                     selected_index=1;
                 } else if(down&KEY_B) { screen_state=settings_return_screen; }
                 else if(down&KEY_UP) { selected_index=(selected_index+1)%2; }
                 else if(down&KEY_DOWN) { selected_index=(selected_index+1)%2; }
-                else if(down&KEY_A) {
-                    if(selected_index==0) { ui_dark_mode=!ui_dark_mode; save_ui_theme(); }
-                    else {
-                        music_keep_after_setup=!music_keep_after_setup;
-                        save_music_settings();
-                        if(music_keep_after_setup) music_start(); else music_begin_fade();
-                    }
-                }
             } else if(screen_state==5) {
                 if(down&KEY_B) { screen_state=2; }
                 else if(down&KEY_UP) { if(message_action_index>0) message_action_index--; }
