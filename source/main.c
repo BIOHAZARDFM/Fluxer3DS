@@ -65,7 +65,9 @@ static C2D_TextBuf text_buffer;
 static u32 theme_color(u8 r, u8 g, u8 b, u8 a)
 {
     int rr=r, gg=g, bb=b;
-    if (g > r && b > r && b > 100) {
+    if(r==119 && g==202 && b==225) { rr=theme_primary[0]; gg=theme_primary[1]; bb=theme_primary[2]; }
+    else if(r==35 && g==151 && b==190) { rr=theme_secondary[0]; gg=theme_secondary[1]; bb=theme_secondary[2]; }
+    else if (g > r && b > r && b > 100) {
         int brightness=(r*30+g*59+b*11)/100;
         int t=brightness;
         if(t<55)t=55;
