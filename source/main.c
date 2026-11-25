@@ -4,6 +4,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <mpg123.h>
+#include <ivorbisfile.h>
+#include <FLAC/stream_decoder.h>
 #include <malloc.h>
 #include <sys/stat.h>
 #include <dirent.h>
@@ -123,6 +127,13 @@ static void load_ui_theme(void)
 #define MUSIC_BUFFER_BYTES (MUSIC_FRAMES * 2 * 2)
 
 static FILE *music_file = NULL;
+static mpg123_handle *music_mp3 = NULL;
+static OggVorbis_File music_ogg;
+static int music_ogg_open = 0;
+static FLAC__StreamDecoder *music_flac = NULL;
+static int music_decoder_type = 0;
+static int16_t music_flac_pcm[MUSIC_FRAMES * 2];
+static u32 music_flac_frames = 0, music_flac_pos = 0;
 static ndspWaveBuf music_wave[2];
 static u8 *music_buffers[2] = {NULL, NULL};
 static u32 music_data_start = 0, music_data_size = 0, music_data_pos = 0;
@@ -280,37 +291,206 @@ static int music_open_wav(void)
     return fseek(music_file,(long)music_data_start,SEEK_SET)==0;
 }
 
+static FLAC__StreamDecoderWriteStatus music_flac_write(
+    const FLAC__StreamDecoder *decoder, const FLAC__Frame *frame,
+    const FLAC__int32 * const buffer[], void *client_data)
+{
+    u32 i;
+    unsigned int channels=frame->header.channels;
+    unsigned int bits=frame->header.bits_per_sample;
+    u32 frames=frame->header.blocksize;
+    (void)decoder; (void)client_data;
+    if(channels<1 || channels>2 || frames>MUSIC_FRAMES)
+        return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+    music_flac_frames=frames;
+    music_flac_pos=0;
+    for(i=0;i<frames;i++) {
+        int c;
+        for(c=0;c<2;c++) {
+            int32_t v=buffer[c<channels?c:0][i];
+            if(bits>16) v >>= bits-16;
+            else if(bits<16) v <<= 16-bits;
+            if(v>32767) v=32767;
+            if(v< -32768) v= -32768;
+            music_flac_pcm[i*2+c]=(int16_t)v;
+        }
+    }
+    return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
+}
+
+static void music_flac_metadata(const FLAC__StreamDecoder *decoder,
+    const FLAC__StreamMetadata *metadata, void *client_data)
+{
+    (void)decoder; (void)client_data;
+    if(metadata->type==FLAC__METADATA_TYPE_STREAMINFO) {
+        music_sample_rate=metadata->data.stream_info.sample_rate;
+        music_channels=metadata->data.stream_info.channels;
+    }
+}
+
+static void music_flac_error(const FLAC__StreamDecoder *decoder,
+    FLAC__StreamDecoderErrorStatus status, void *client_data)
+{
+    (void)decoder; (void)status; (void)client_data;
+}
+
+static void music_close_decoder(void)
+{
+    if(music_mp3) { mpg123_close(music_mp3); mpg123_delete(music_mp3); music_mp3=NULL; }
+    if(music_ogg_open) { ov_clear(&music_ogg); music_ogg_open=0; music_file=NULL; }
+    if(music_flac) {
+        FLAC__stream_decoder_finish(music_flac);
+        FLAC__stream_decoder_delete(music_flac);
+        music_flac=NULL;
+    }
+    if(music_file) { fclose(music_file); music_file=NULL; }
+    music_decoder_type=0;
+    music_flac_frames=music_flac_pos=0;
+}
+
+static int music_open_audio(void)
+{
+    const char *dot=strrchr(music_current_path,'.');
+    music_sample_rate=0; music_channels=0; music_bits=16;
+    if(!dot || !strcasecmp(dot,".wav")) {
+        if(!music_open_wav()) return 0;
+        music_decoder_type=1;
+        return 1;
+    }
+    if(!strcasecmp(dot,".mp3")) {
+        int err=0, channels=0, encoding=0;
+        long rate=0;
+        if(mpg123_init()!=MPG123_OK) return 0;
+        music_mp3=mpg123_new(NULL,&err);
+        if(!music_mp3) return 0;
+        mpg123_format_none(music_mp3);
+        mpg123_format(music_mp3,8000,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
+        mpg123_format(music_mp3,11025,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
+        mpg123_format(music_mp3,16000,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
+        mpg123_format(music_mp3,22050,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
+        mpg123_format(music_mp3,24000,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
+        mpg123_format(music_mp3,32000,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
+        mpg123_format(music_mp3,44100,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
+        mpg123_format(music_mp3,48000,MPG123_MONO|MPG123_STEREO,MPG123_ENC_SIGNED_16);
+        if(mpg123_open(music_mp3,music_current_path)!=MPG123_OK ||
+           mpg123_getformat(music_mp3,&rate,&channels,&encoding)!=MPG123_OK ||
+           rate<8000 || rate>48000 || channels<1 || channels>2 ||
+           !(encoding&MPG123_ENC_SIGNED_16)) {
+            music_close_decoder(); return 0;
+        }
+        music_sample_rate=(u32)rate; music_channels=(u16)channels;
+        music_decoder_type=2;
+        return 1;
+    }
+    if(!strcasecmp(dot,".ogg")) {
+        music_file=fopen(music_current_path,"rb");
+        if(!music_file || ov_open(music_file,&music_ogg,NULL,0)!=0) {
+            if(music_file) fclose(music_file);
+            music_file=NULL; return 0;
+        }
+        music_ogg_open=1;
+        {
+            vorbis_info *info=ov_info(&music_ogg,-1);
+            if(!info || info->rate<8000 || info->rate>48000 ||
+               info->channels<1 || info->channels>2) {
+                music_close_decoder(); return 0;
+            }
+            music_sample_rate=(u32)info->rate;
+            music_channels=(u16)info->channels;
+        }
+        music_decoder_type=3;
+        return 1;
+    }
+    if(!strcasecmp(dot,".flac")) {
+        music_flac=FLAC__stream_decoder_new();
+        if(!music_flac) return 0;
+        if(FLAC__stream_decoder_init_file(music_flac,music_current_path,
+             music_flac_write,music_flac_metadata,music_flac_error,NULL)
+             !=FLAC__STREAM_DECODER_INIT_STATUS_OK ||
+           !FLAC__stream_decoder_process_until_end_of_metadata(music_flac) ||
+           music_sample_rate<8000 || music_sample_rate>48000 ||
+           music_channels<1 || music_channels>2) {
+            music_close_decoder(); return 0;
+        }
+        music_decoder_type=4;
+        return 1;
+    }
+    return 0;
+}
+
+static int music_read_pcm(u8 *dest, size_t capacity, size_t *bytes_read)
+{
+    size_t total=0;
+    *bytes_read=0;
+    while(total<capacity) {
+        if(music_decoder_type==1) {
+            u32 frame_bytes=(u32)music_channels*2;
+            u32 left;
+            size_t wanted,got;
+            if(music_data_pos>=music_data_size) {
+                music_data_pos=0;
+                if(fseek(music_file,(long)music_data_start,SEEK_SET)!=0) break;
+            }
+            left=music_data_size-music_data_pos;
+            wanted=capacity-total;
+            if(wanted>left) wanted=left;
+            wanted-=wanted%frame_bytes;
+            if(!wanted) { music_data_pos=music_data_size; continue; }
+            got=fread(dest+total,1,wanted,music_file);
+            got-=got%frame_bytes;
+            if(!got) { music_data_pos=music_data_size; continue; }
+            music_data_pos+=(u32)got;
+            total+=got;
+        } else if(music_decoder_type==2) {
+            size_t done=0;
+            int rc=mpg123_read(music_mp3,dest+total,capacity-total,&done);
+            total+=done;
+            if(rc==MPG123_DONE) {
+                if(mpg123_seek(music_mp3,0,SEEK_SET)<0) break;
+            } else if(rc!=MPG123_OK && rc!=MPG123_NEW_FORMAT) break;
+            if(done==0 && rc==MPG123_OK) break;
+        } else if(music_decoder_type==3) {
+            int bitstream=0;
+            long got=ov_read(&music_ogg,(char*)dest+total,(int)(capacity-total),&bitstream);
+            if(got==0) {
+                if(ov_time_seek(&music_ogg,0)!=0) break;
+            } else if(got<0) {
+                continue;
+            } else total+=(size_t)got;
+        } else if(music_decoder_type==4) {
+            if(music_flac_pos>=music_flac_frames) {
+                music_flac_frames=music_flac_pos=0;
+                if(!FLAC__stream_decoder_process_single(music_flac)) {
+                    if(!FLAC__stream_decoder_seek_absolute(music_flac,0)) break;
+                    continue;
+                }
+                if(music_flac_frames==0) {
+                    if(!FLAC__stream_decoder_seek_absolute(music_flac,0)) break;
+                    continue;
+                }
+            } else {
+                size_t avail=(size_t)(music_flac_frames-music_flac_pos)*4;
+                size_t take=capacity-total;
+                if(take>avail) take=avail;
+                take-=take%4;
+                if(!take) break;
+                memcpy(dest+total,&music_flac_pcm[music_flac_pos*2],take);
+                music_flac_pos+=(u32)(take/4);
+                total+=take;
+            }
+        } else break;
+    }
+    *bytes_read=total;
+    return total>0;
+}
+
 static int music_fill_buffer(int slot)
 {
-    size_t wanted, total=0, got;
-    u32 frame_bytes=(u32)music_channels*2;
-    while(total<MUSIC_BUFFER_BYTES) {
-        u32 left;
-        if(music_data_pos>=music_data_size) {
-            music_data_pos=0;
-            if(fseek(music_file,(long)music_data_start,SEEK_SET)!=0) return 0;
-        }
-        left=music_data_size-music_data_pos;
-        wanted=MUSIC_BUFFER_BYTES-total;
-        if(wanted>left) wanted=left;
-        wanted-=wanted%frame_bytes;
-        if(wanted==0) {
-            music_data_pos=music_data_size;
-            continue;
-        }
-        got=fread(music_buffers[slot]+total,1,wanted,music_file);
-        if(got==0) {
-            music_data_pos=music_data_size;
-            continue;
-        }
-        got-=got%frame_bytes;
-        total+=got;
-        music_data_pos+=(u32)got;
-        if(got==0) return 0;
-    }
+    size_t total=0;
+    if(!music_read_pcm(music_buffers[slot],MUSIC_BUFFER_BYTES,&total)) return 0;
     memset(&music_wave[slot],0,sizeof(music_wave[slot]));
     music_wave[slot].data_vaddr=music_buffers[slot];
-    music_wave[slot].nsamples=(u32)(total/frame_bytes);
+    music_wave[slot].nsamples=(u32)(total/((u32)music_channels*2));
     music_wave[slot].looping=false;
     ndspChnWaveBufAdd(0,&music_wave[slot]);
     return 1;
@@ -323,7 +503,7 @@ static void music_stop(void)
     music_playing=0;
     music_fading_out=0;
     music_volume=1.0f;
-    if(music_file) { fclose(music_file); music_file=NULL; }
+    music_close_decoder();
     for(i=0;i<2;i++) {
         if(music_buffers[i]) { linearFree(music_buffers[i]); music_buffers[i]=NULL; }
         memset(&music_wave[i],0,sizeof(music_wave[i]));
@@ -347,7 +527,7 @@ static void music_start(void)
         if(music_track_count<=0) return;
         snprintf(music_current_path,sizeof(music_current_path),"%s",music_tracks[music_track_index]);
     } else snprintf(music_current_path,sizeof(music_current_path),"sdmc:/3ds/Fluxer3DS/TITLE.WAV");
-    if(!music_open_wav()) return;
+    if(!music_open_audio()) return;
     for(i=0;i<2;i++) {
         music_buffers[i]=(u8*)linearAlloc(MUSIC_BUFFER_BYTES);
         if(!music_buffers[i]) { music_stop(); return; }
@@ -1763,7 +1943,7 @@ static void render_bottom(void) {
         draw_text("SETTINGS",14,49,0.62f,COL_TEXT);
         draw_text("Background music",14,76,0.39f,COL_MUTED);
         draw_aero_button(14,96,292,28,music_keep_after_setup?"[X] KEEP MUSIC AFTER SETUP":"[ ] KEEP MUSIC AFTER SETUP",selected_index==0?COL_GREEN:COL_ACCENT);
-        draw_aero_button(14,137,292,34,music_play_all_sd?"[X] PLAY ALL WAV FILES ON SD":"[ ] PLAY ALL WAV FILES ON SD",selected_index==1?COL_GREEN:COL_ACCENT);
+        draw_aero_button(14,137,292,34,music_play_all_sd?"[X] PLAY ALL MUSIC ON SD":"[ ] PLAY ALL WAV FILES ON SD",selected_index==1?COL_GREEN:COL_ACCENT);
         draw_text("L: previous song   R: next song",14,193,0.34f,COL_MUTED);
         draw_text("A: toggle   B: back",14,229,0.30f,COL_TEXT);
     } else if(screen_state==5) {
