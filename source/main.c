@@ -2054,6 +2054,12 @@ int main(int argc, char *argv[])
     C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
     C2D_Prepare();
 
+    /* This is a painter-ordered 2D interface. Citro2D defaults to GEQUAL
+       depth testing, so decorative shadow quads at z=0.55 can occlude later
+       panels and text at lower/equal depths, leaving dark blocks. Disable
+       depth testing so later UI layers render over earlier ones. */
+    C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_ALL);
+
     C3D_RenderTarget *top =
         C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
 
