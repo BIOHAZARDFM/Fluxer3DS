@@ -16,7 +16,7 @@ static float cursor_x = 200.0f, cursor_y = 120.0f;
 static int selected_message_index = -1;
 static int message_action_index = 0;
 static char reply_message_id[32] = "";
-static const char *ui_theme_names[] = {"WHITE", "SUNSET", "LAVENDER", "MIDNIGHT"};
+static const char *ui_theme_names[] = {"WHITE"};
 
 #define API_BASE       "https://api.fluxer.app/v1"
 #define SOC_ALIGN      0x1000
@@ -90,8 +90,8 @@ static u32 theme_color(u8 r, u8 g, u8 b, u8 a)
         if (luminance >= 190) rr=gg=bb=58;
         else if (luminance >= 105) rr=gg=bb=82;
         else rr=gg=bb=222;
-    } else if (ui_theme_index == 0) {
-        /* White theme: clean white surfaces and cool-grey accents. */
+    } else {
+        /* White is the default light appearance. */
         if (r > 180 && g > 180 && b > 180) rr=gg=bb=250;
         else if (r < 100 && g < 130 && b < 150) { rr=35; gg=67; bb=82; }
     }
@@ -119,7 +119,7 @@ static void load_ui_theme(void)
     int c;
     if (!f) return;
     c=fgetc(f);
-    if (c>='0' && c<='3') ui_theme_index=c-'0';
+    if (c>='0' && c<='3') ui_theme_index=0;
     c=fgetc(f);
     if (c=='0' || c=='1') ui_dark_mode=c-'0';
     fclose(f);
@@ -127,8 +127,179 @@ static void load_ui_theme(void)
 
 static void cycle_ui_theme(int direction)
 {
-    ui_theme_index=(ui_theme_index+direction+4)%4;
+    (void)direction;
+    ui_dark_mode=!ui_dark_mode;
     save_ui_theme();
+}
+
+/* ---------------------------------------------------------
+   SETUP MUSIC (16-bit PCM WAV streamed through NDSP)
+   --------------------------------------------------------- */
+
+#define MUSIC_FRAMES 8192
+#define MUSIC_BUFFER_BYTES (MUSIC_FRAMES * 2 * 2)
+
+static FILE *music_file = NULL;
+static ndspWaveBuf music_wave[2];
+static u8 *music_buffers[2] = {NULL, NULL};
+static u32 music_data_start = 0, music_data_size = 0, music_data_pos = 0;
+static u32 music_sample_rate = 0;
+static u16 music_channels = 0, music_bits = 0, music_format = 0;
+static int music_ndsp_ready = 0, music_playing = 0;
+static int music_keep_after_setup = 0, music_setup_finished = 0;
+
+static u16 wav_u16(const u8 *p)
+{
+    return (u16)(p[0] | ((u16)p[1] << 8));
+}
+
+static u32 wav_u32(const u8 *p)
+{
+    return (u32)p[0] | ((u32)p[1] << 8) |
+           ((u32)p[2] << 16) | ((u32)p[3] << 24);
+}
+
+static void save_music_settings(void)
+{
+    FILE *f;
+    mkdir("sdmc:/3ds",0777);
+    mkdir("sdmc:/3ds/Fluxer3DS",0777);
+    f=fopen("sdmc:/3ds/Fluxer3DS/music.dat","wb");
+    if(!f) return;
+    fputc(music_keep_after_setup?'1':'0',f);
+    fclose(f);
+}
+
+static void load_music_settings(void)
+{
+    FILE *f=fopen("sdmc:/3ds/Fluxer3DS/music.dat","rb");
+    int c;
+    if(!f) return;
+    c=fgetc(f);
+    if(c=='0'||c=='1') music_keep_after_setup=(c=='1');
+    fclose(f);
+}
+
+static int music_open_wav(void)
+{
+    u8 chunk[12], fmt[16];
+    int have_fmt=0, have_data=0;
+    u32 chunk_size, chunk_start;
+    music_file=fopen("sdmc:/3ds/Fluxer3DS/TITLE.WAV","rb");
+    if(!music_file) music_file=fopen("sdmc:/3ds/Fluxer3DS/title.wav","rb");
+    if(!music_file) return 0;
+
+    if(fread(chunk,1,12,music_file)!=12 ||
+       memcmp(chunk,"RIFF",4)!=0 || memcmp(chunk+8,"WAVE",4)!=0) {
+        fclose(music_file); music_file=NULL; return 0;
+    }
+
+    while(fread(chunk,1,8,music_file)==8) {
+        chunk_size=wav_u32(chunk+4);
+        chunk_start=(u32)ftell(music_file);
+        if(memcmp(chunk,"fmt ",4)==0 && chunk_size>=16) {
+            if(fread(fmt,1,16,music_file)!=16) break;
+            music_format=wav_u16(fmt);
+            music_channels=wav_u16(fmt+2);
+            music_sample_rate=wav_u32(fmt+4);
+            music_bits=wav_u16(fmt+14);
+            have_fmt=1;
+        } else if(memcmp(chunk,"data",4)==0) {
+            music_data_start=chunk_start;
+            music_data_size=chunk_size;
+            have_data=1;
+        }
+        if(have_fmt&&have_data) break;
+        if(fseek(music_file,(long)(chunk_start+chunk_size+(chunk_size&1)),SEEK_SET)!=0) break;
+    }
+
+    if(!have_fmt||!have_data||music_format!=1||music_bits!=16||
+       (music_channels!=1&&music_channels!=2)||
+       music_sample_rate<8000||music_sample_rate>48000||
+       music_data_size<(u32)(music_channels*2)) {
+        fclose(music_file); music_file=NULL; return 0;
+    }
+    music_data_pos=0;
+    return fseek(music_file,(long)music_data_start,SEEK_SET)==0;
+}
+
+static int music_fill_buffer(int slot)
+{
+    size_t wanted, total=0, got;
+    u32 frame_bytes=(u32)music_channels*2;
+    while(total<MUSIC_BUFFER_BYTES) {
+        u32 left;
+        if(music_data_pos>=music_data_size) {
+            music_data_pos=0;
+            if(fseek(music_file,(long)music_data_start,SEEK_SET)!=0) return 0;
+        }
+        left=music_data_size-music_data_pos;
+        wanted=MUSIC_BUFFER_BYTES-total;
+        if(wanted>left) wanted=left;
+        wanted-=wanted%frame_bytes;
+        if(wanted==0) {
+            music_data_pos=music_data_size;
+            continue;
+        }
+        got=fread(music_buffers[slot]+total,1,wanted,music_file);
+        if(got==0) {
+            music_data_pos=music_data_size;
+            continue;
+        }
+        got-=got%frame_bytes;
+        total+=got;
+        music_data_pos+=(u32)got;
+        if(got==0) return 0;
+    }
+    memset(&music_wave[slot],0,sizeof(music_wave[slot]));
+    music_wave[slot].data_vaddr=music_buffers[slot];
+    music_wave[slot].nsamples=(u32)(total/frame_bytes);
+    music_wave[slot].looping=false;
+    ndspChnWaveBufAdd(0,&music_wave[slot]);
+    return 1;
+}
+
+static void music_stop(void)
+{
+    int i;
+    if(music_ndsp_ready) ndspChnReset(0);
+    music_playing=0;
+    if(music_file) { fclose(music_file); music_file=NULL; }
+    for(i=0;i<2;i++) {
+        if(music_buffers[i]) { linearFree(music_buffers[i]); music_buffers[i]=NULL; }
+        memset(&music_wave[i],0,sizeof(music_wave[i]));
+    }
+}
+
+static void music_start(void)
+{
+    float mix[12]={1.0f,1.0f,0.0f,0.0f,0.0f,0.0f,
+                   0.0f,0.0f,0.0f,0.0f,0.0f,0.0f};
+    int i;
+    if(!music_ndsp_ready||music_playing) return;
+    if(!music_open_wav()) return;
+    for(i=0;i<2;i++) {
+        music_buffers[i]=(u8*)linearAlloc(MUSIC_BUFFER_BYTES);
+        if(!music_buffers[i]) { music_stop(); return; }
+    }
+    ndspChnReset(0);
+    ndspChnSetInterp(0,NDSP_INTERP_LINEAR);
+    ndspChnSetRate(0,(float)music_sample_rate);
+    ndspChnSetFormat(0,music_channels==1?NDSP_FORMAT_MONO_PCM16:NDSP_FORMAT_STEREO_PCM16);
+    ndspChnSetMix(0,mix);
+    if(!music_fill_buffer(0)||!music_fill_buffer(1)) { music_stop(); return; }
+    ndspChnSetPaused(0,false);
+    music_playing=1;
+}
+
+static void music_update(void)
+{
+    int i;
+    if(!music_playing) return;
+    for(i=0;i<2;i++) {
+        if(music_wave[i].status==NDSP_WBUF_DONE)
+            music_fill_buffer(i);
+    }
 }
 
 /* ---------------------------------------------------------
@@ -1453,7 +1624,7 @@ static void render_bottom(void) {
     draw_aero_background(320,240);
     draw_aero_panel(0,0,320,34);
     draw_text("fluxer",12,5,0.68f,COL_TEXT);
-    draw_text(ui_theme_names[ui_theme_index],155,9,0.34f,COL_TEXT);
+    draw_text(ui_dark_mode?"MEADOWS":"WHITE",155,9,0.34f,COL_TEXT);
     draw_text("< L/R >",210,9,0.27f,COL_MUTED);
     if(app_state==2)
         draw_aero_button(230,37,82,23,screen_state==4?"BACK":"SETTINGS",theme_color(104,112,184,255));
@@ -1500,16 +1671,12 @@ static void render_bottom(void) {
         draw_aero_button(264,216,22,20,"^",COL_ACCENT);
         draw_aero_button(289,216,22,20,"v",COL_ACCENT);
     } else if(screen_state==4) {
-        int ti;
         draw_text("SETTINGS",14,49,0.62f,COL_TEXT);
-        draw_text("Interface theme",14,76,0.39f,COL_MUTED);
-        for(ti=0;ti<4;ti++) {
-            draw_aero_button(14,96+ti*25,292,22,ui_theme_names[ti],
-                ti==ui_theme_index?COL_GREEN:theme_color(74,150,183,255));
-        }
-        draw_text("Appearance",14,201,0.34f,COL_MUTED);
-        draw_aero_button(174,194,132,28,ui_dark_mode?"MEADOWS":"WHITE THEME",COL_ACCENT);
-        draw_text("A: select   B: back",14,229,0.30f,COL_TEXT);
+        draw_text("Appearance",14,76,0.39f,COL_MUTED);
+        draw_aero_button(14,96,292,28,ui_dark_mode?"MEADOWS":"WHITE",selected_index==0?COL_GREEN:COL_ACCENT);
+        draw_text("Background music",14,133,0.39f,COL_MUTED);
+        draw_aero_button(14,153,292,28,music_keep_after_setup?"[X] KEEP MUSIC AFTER SETUP":"[ ] KEEP MUSIC AFTER SETUP",selected_index==1?COL_GREEN:COL_ACCENT);
+        draw_text("A: toggle   B: back",14,229,0.30f,COL_TEXT);
     } else if(screen_state==5) {
         static const char *actions[]={"Reply","Heart","Thumbs up","Thumbs down","Laugh","Sad"};
         draw_text("MESSAGE ACTIONS",14,48,0.58f,COL_TEXT);
@@ -1606,6 +1773,11 @@ int main(int argc, char *argv[])
         C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 
     load_ui_theme();
+    load_music_settings();
+    if(R_SUCCEEDED(ndspInit())) {
+        music_ndsp_ready=1;
+        music_start();
+    }
 
     ui_font = C2D_FontLoadSystem(CFG_REGION_USA);
     text_buffer = C2D_TextBufNew(4096);
@@ -1627,6 +1799,12 @@ int main(int argc, char *argv[])
 
     while (aptMainLoop()) {
         hidScanInput();
+
+        if(app_state==2 && !music_setup_finished) {
+            music_setup_finished=1;
+            if(!music_keep_after_setup) music_stop();
+        }
+        music_update();
 
         u32 down = hidKeysDown();
         circlePosition circle;
@@ -1663,13 +1841,10 @@ int main(int argc, char *argv[])
             hidTouchRead(&touch);
             if(app_state==2 && touch.py>=36 && touch.py<=60 && touch.px>=230 && touch.px<=314)
                 settings_touched=1;
-            if(app_state==2 && screen_state==4 && touch.py>=96 && touch.py<196 && touch.px>=14 && touch.px<=306) {
-                settings_theme_touch=(touch.py-96)/25;
-                if(settings_theme_touch<0 || settings_theme_touch>3) settings_theme_touch=-1;
-            }
-            if(app_state==2 && screen_state==4 && touch.py>=194 && touch.py<=224 && touch.px>=174 && touch.px<=306) {
-                ui_dark_mode=!ui_dark_mode; save_ui_theme();
-            }
+            if(app_state==2 && screen_state==4 && touch.py>=96 && touch.py<=124 && touch.px>=14 && touch.px<=306)
+                settings_theme_touch=0;
+            if(app_state==2 && screen_state==4 && touch.py>=153 && touch.py<=181 && touch.px>=14 && touch.px<=306)
+                settings_theme_touch=1;
             if(app_state==2 && screen_state==5 && touch.py>=96 && touch.py<228 && touch.px>=14 && touch.px<=306) {
                 message_action_index=(touch.py-96)/22;
                 if(message_action_index>5) message_action_index=5;
@@ -1750,16 +1925,25 @@ int main(int argc, char *argv[])
             int total=screen_state==0?guild_count+1:(screen_state==1?channel_count:(screen_state==3?friend_count:message_count));
             if(settings_touched) {
                 if(screen_state==4) { screen_state=settings_return_screen; }
-                else { settings_return_screen=screen_state; screen_state=4; selected_index=ui_theme_index; }
+                else { settings_return_screen=screen_state; screen_state=4; selected_index=0; }
             } else if(screen_state==4) {
-                if(settings_theme_touch>=0) { ui_theme_index=settings_theme_touch; save_ui_theme(); selected_index=ui_theme_index; }
-                else if(down&KEY_B) { screen_state=settings_return_screen; }
-                else if(down&KEY_UP) { selected_index=(selected_index+4)%5; }
-                else if(down&KEY_DOWN) { selected_index=(selected_index+1)%5; }
+                if(settings_theme_touch==0) {
+                    ui_dark_mode=!ui_dark_mode; save_ui_theme(); selected_index=0;
+                } else if(settings_theme_touch==1) {
+                    music_keep_after_setup=!music_keep_after_setup;
+                    save_music_settings();
+                    if(music_keep_after_setup) music_start(); else music_stop();
+                    selected_index=1;
+                } else if(down&KEY_B) { screen_state=settings_return_screen; }
+                else if(down&KEY_UP) { selected_index=(selected_index+1)%2; }
+                else if(down&KEY_DOWN) { selected_index=(selected_index+1)%2; }
                 else if(down&KEY_A) {
-                    if(selected_index<4) ui_theme_index=selected_index;
-                    else ui_dark_mode=!ui_dark_mode;
-                    save_ui_theme();
+                    if(selected_index==0) { ui_dark_mode=!ui_dark_mode; save_ui_theme(); }
+                    else {
+                        music_keep_after_setup=!music_keep_after_setup;
+                        save_music_settings();
+                        if(music_keep_after_setup) music_start(); else music_stop();
+                    }
                 }
             } else if(screen_state==5) {
                 if(down&KEY_B) { screen_state=2; }
@@ -1875,6 +2059,10 @@ int main(int argc, char *argv[])
 
         C3D_FrameEnd(0);
     }
+
+    music_stop();
+    if(music_ndsp_ready) ndspExit();
+    music_ndsp_ready=0;
 
     memset(session_token, 0, sizeof(session_token));
     memset(mfa_ticket, 0, sizeof(mfa_ticket));
