@@ -19,7 +19,7 @@ jobs:
           # The official devkitarm image already includes the 3DS toolchain
           # and 3ds-dev dependencies. Keep its bundled package database:
           # forcing -Sy here hits the devkitPro mirror's current HTTP 403.
-          dkp-pacman -S --needed --noconfirm 3ds-mbedtls 3ds-curl 3ds-libogg 3ds-libvorbisidec 3ds-mpg123 3ds-flac 3dstools
+          dkp-pacman -S --needed --noconfirm 3ds-mbedtls 3ds-curl 3dstools
           echo "$DEVKITPRO/tools/bin" >> "$GITHUB_PATH"
 
       - name: Find ARM toolchain
@@ -44,5 +44,4 @@ jobs:
             Fluxer3DS.3dsx
             Fluxer3DS.elf
             Fluxer3DS.smdh
-            TITLE.WAV
           if-no-files-found: error
