@@ -941,10 +941,7 @@ static void send_chat_message(void) {
     ChatItem *item=active_is_dm?&dm_items[active_channel]:&channel_items[active_channel];
     if(!message_draft[0]) { snprintf(home_status,sizeof(home_status),"Write a message first."); return; }
     if(!json_escape(message_draft,escaped,sizeof(escaped))) return;
-    if(reply_message_id[0])
-        snprintf(body,sizeof(body),"{\"content\":\"%s\",\"message_reference\":{\"message_id\":\"%s\"}}",escaped,reply_message_id);
-    else
-        snprintf(body,sizeof(body),"{\"content\":\"%s\"}",escaped);
+    snprintf(body,sizeof(body),"{\"content\":\"%s\"}",escaped);
     snprintf(path,sizeof(path),"/channels/%s/messages",item->id);
     Result rc=api_request(HTTPC_METHOD_POST,path,body,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
     memset(escaped,0,sizeof(escaped)); memset(body,0,sizeof(body));
