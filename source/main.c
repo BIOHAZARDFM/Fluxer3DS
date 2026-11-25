@@ -16,6 +16,7 @@ static int ui_dark_mode = 0;
 static u8 theme_primary[3] = {119,202,225};
 static u8 theme_secondary[3] = {35,151,190};
 static int theme_edit_target = 0;
+static int theme_wheel_open = 0;
 
 #define API_BASE       "https://api.fluxer.app/v1"
 #define SOC_ALIGN      0x1000
@@ -1517,9 +1518,14 @@ static void render_bottom(void) {
         draw_text("SECONDARY THEME COLOR",14,115,0.32f,COL_MUTED);
         draw_aero_button(14,127,132,25,"SECONDARY",theme_edit_target==1?COL_GREEN:COL_ACCENT);
         C2D_DrawRectSolid(158,127,0.1f,38,25,C2D_Color32(theme_secondary[0],theme_secondary[1],theme_secondary[2],255));
-        draw_theme_color_wheel();
-        C2D_DrawRectSolid(205,157,0.1f,70,48,theme_edit_target?C2D_Color32(theme_secondary[0],theme_secondary[1],theme_secondary[2],255):C2D_Color32(theme_primary[0],theme_primary[1],theme_primary[2],255));
-        draw_text("COLOR PREVIEW",205,211,0.27f,COL_MUTED);
+        if(theme_wheel_open) {
+            draw_theme_color_wheel();
+            C2D_DrawRectSolid(205,157,0.1f,70,48,theme_edit_target?C2D_Color32(theme_secondary[0],theme_secondary[1],theme_secondary[2],255):C2D_Color32(theme_primary[0],theme_primary[1],theme_primary[2],255));
+            draw_text("COLOR PREVIEW",205,211,0.27f,COL_MUTED);
+        } else {
+            draw_text("Tap a color square",72,177,0.42f,COL_TEXT);
+            draw_text("to open its color wheel",72,198,0.32f,COL_MUTED);
+        }
         draw_text("Touch wheel to choose",173,76,0.29f,COL_TEXT);
         draw_text("A: choose   B: back",14,229,0.30f,COL_TEXT);
     } else if(screen_state==2) {
@@ -1673,6 +1679,7 @@ int main(int argc, char *argv[])
         int touched=0,tile_touched=0,tile_index=-1;
         int composer_keyboard=0,composer_emoji=0,composer_send=0;
         int settings_touched=0,settings_primary_touch=0,settings_secondary_touch=0;
+        int settings_primary_swatch=0,settings_secondary_swatch=0;
         if(down&KEY_TOUCH) {
             hidTouchRead(&touch);
             if(app_state==2 && touch.py>=36 && touch.py<=60 && touch.px>=230 && touch.px<=314)
@@ -1762,11 +1769,15 @@ int main(int argc, char *argv[])
                 if(screen_state==4) { screen_state=settings_return_screen; }
                 else { settings_return_screen=screen_state; screen_state=4; selected_index=0; }
             } else if(screen_state==4) {
-                if(settings_primary_touch || ((down&KEY_A)&&selected_index==0)) {
+                if(settings_primary_swatch) {
+                    theme_edit_target=0; theme_wheel_open=1; selected_index=0;
+                } else if(settings_secondary_swatch) {
+                    theme_edit_target=1; theme_wheel_open=1; selected_index=1;
+                } else if(settings_primary_touch || ((down&KEY_A)&&selected_index==0)) {
                     theme_edit_target=0; selected_index=0;
                 } else if(settings_secondary_touch || ((down&KEY_A)&&selected_index==1)) {
                     theme_edit_target=1; selected_index=1;
-                } else if(down&KEY_B) { screen_state=settings_return_screen; }
+                } else if(down&KEY_B) { if(theme_wheel_open) theme_wheel_open=0; else screen_state=settings_return_screen; }
                 else if(down&KEY_UP) { selected_index=(selected_index+1)%2; }
                 else if(down&KEY_DOWN) { selected_index=(selected_index+1)%2; }
             } else if(down&KEY_X) {
