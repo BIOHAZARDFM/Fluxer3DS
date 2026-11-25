@@ -44,4 +44,5 @@ jobs:
             Fluxer3DS.3dsx
             Fluxer3DS.elf
             Fluxer3DS.smdh
+            TITLE.WAV
           if-no-files-found: error
