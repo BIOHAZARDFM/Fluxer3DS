@@ -21,7 +21,7 @@ static const char *ui_theme_names[] = {"WHITE", "SUNSET", "LAVENDER", "MIDNIGHT"
 #define API_BASE       "https://api.fluxer.app/v1"
 #define SOC_ALIGN      0x1000
 #define SOC_BUFFERSIZE 0x100000
-#define HTTP_BODY_MAX  16384
+#define HTTP_BODY_MAX  262144
 #define MESSAGE_BODY_MAX 262144
 #define TOKEN_MAX      2048
 #define INPUT_MAX      384
@@ -310,7 +310,7 @@ static int load_session_token(void);
 static void delete_saved_session(void);
 
 /* ---------------- Fluxer chat browser ---------------- */
-#define MAX_ITEMS 64
+#define MAX_ITEMS 256
 #define MAX_MESSAGES 50
 typedef struct { char id[32]; char name[72]; char peer_id[32]; int type; } ChatItem;
 typedef struct { char id[32]; char author[48]; char content[240]; } ChatMessage;
