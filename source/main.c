@@ -589,6 +589,7 @@ static void sort_messages_oldest_first(void) {
     }
 }
 
+static void append_emoticon(const char *value);
 static int parse_expression_array(const char *json,GuildExpression *out,int max) {
     const char *p=strchr(json,'[');
     int count=0;
