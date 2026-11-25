@@ -219,6 +219,9 @@ static void music_build_playlist(void)
     }
 }
 
+static void music_start(void);
+static void music_stop(void);
+
 static void music_change_track(int direction)
 {
     if(!music_ndsp_ready) return;
