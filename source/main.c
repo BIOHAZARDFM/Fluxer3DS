@@ -1716,8 +1716,8 @@ int main(int argc, char *argv[])
                 settings_primary_touch=1;
             if(app_state==2 && screen_state==4 && touch.py>=127 && touch.py<=152 && touch.px>=14 && touch.px<=196)
                 settings_secondary_touch=1;
-            if(app_state==2 && screen_state==4 && touch.py>=102 && touch.py<=239 && touch.px>=30 && touch.px<=162 &&
-               !(touch.py>=127 && touch.py<=152)) {
+            if(app_state==2 && screen_state==4 && theme_wheel_open &&
+               touch.py>=108 && touch.py<=239 && touch.px>=30 && touch.px<=162) {
                 choose_theme_color(touch.px,touch.py);
             }
             touched=touch.px>=10&&touch.px<=310&&touch.py>=185&&touch.py<=230;
@@ -1802,9 +1802,9 @@ int main(int argc, char *argv[])
                 } else if(settings_secondary_swatch) {
                     theme_edit_target=1; theme_wheel_open=1; selected_index=1;
                 } else if(settings_primary_touch || ((down&KEY_A)&&selected_index==0)) {
-                    theme_edit_target=0; selected_index=0;
+                    theme_edit_target=0; theme_wheel_open=1; selected_index=0;
                 } else if(settings_secondary_touch || ((down&KEY_A)&&selected_index==1)) {
-                    theme_edit_target=1; selected_index=1;
+                    theme_edit_target=1; theme_wheel_open=1; selected_index=1;
                 } else if(down&KEY_B) { if(theme_wheel_open) theme_wheel_open=0; else screen_state=settings_return_screen; }
                 else if(down&KEY_UP) { selected_index=(selected_index+1)%2; }
                 else if(down&KEY_DOWN) { selected_index=(selected_index+1)%2; }
