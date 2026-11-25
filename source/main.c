@@ -17,7 +17,6 @@ static float cursor_x = 200.0f, cursor_y = 120.0f;
 static int selected_message_index = -1;
 static int message_action_index = 0;
 static char reply_message_id[32] = "";
-static const char *ui_theme_names[] = {"WHITE"};
 
 #define API_BASE       "https://api.fluxer.app/v1"
 #define SOC_ALIGN      0x1000
@@ -102,17 +101,6 @@ static u32 theme_color(u8 r, u8 g, u8 b, u8 a)
     return C2D_Color32((u8)rr,(u8)gg,(u8)bb,a);
 }
 
-static void save_ui_theme(void)
-{
-    FILE *f;
-    mkdir("sdmc:/3ds",0777);
-    mkdir("sdmc:/3ds/Fluxer3DS",0777);
-    f=fopen("sdmc:/3ds/Fluxer3DS/theme.dat","wb");
-    if (!f) return;
-    fputc('0'+ui_theme_index,f);
-    fputc(ui_dark_mode?'1':'0',f);
-    fclose(f);
-}
 
 static void load_ui_theme(void)
 {
@@ -186,14 +174,12 @@ static void load_music_settings(void)
     fclose(f);
 }
 
-static int music_is_wav(const char *name)
+static int music_is_supported_audio(const char *name)
 {
-    size_t n=strlen(name);
-    if(n<4) return 0;
-    return name[n-4]=='.' &&
-        (name[n-3]=='w'||name[n-3]=='W') &&
-        (name[n-2]=='a'||name[n-2]=='A') &&
-        (name[n-1]=='v'||name[n-1]=='V');
+    const char *dot=strrchr(name,'.');
+    if(!dot) return 0;
+    return !strcasecmp(dot,".wav") || !strcasecmp(dot,".mp3") ||
+           !strcasecmp(dot,".ogg") || !strcasecmp(dot,".flac");
 }
 
 static void music_scan_directory(const char *directory, int depth)
@@ -213,7 +199,7 @@ static void music_scan_directory(const char *directory, int depth)
         if(stat(path,&st)!=0) continue;
         if(S_ISDIR(st.st_mode)) {
             music_scan_directory(path,depth+1);
-        } else if(S_ISREG(st.st_mode) && music_is_wav(entry->d_name)) {
+        } else if(S_ISREG(st.st_mode) && music_is_supported_audio(entry->d_name)) {
             snprintf(music_tracks[music_track_count],MUSIC_PATH_MAX,"%s",path);
             music_track_count++;
         }
