@@ -1754,25 +1754,25 @@ static void draw_wrapped_message(const char *value,float x,float y,
         char part[80];
         int n=0,last_space=-1;
         const char *start=p;
-        while(*p && *p!='\\n' && n<max_chars) {
+        while(*p && *p!='\n' && n<max_chars) {
             if(*p==' ') last_space=n;
             p++; n++;
         }
-        if(*p && *p!='\\n' && n==max_chars && last_space>0) {
+        if(*p && *p!='\n' && n==max_chars && last_space>0) {
             p=start+last_space;
             n=last_space;
         }
-        if(n<=0 && *p=='\\n') { p++; line++; continue; }
+        if(n<=0 && *p=='\n') { p++; line++; continue; }
         if(n>=(int)sizeof(part)) n=(int)sizeof(part)-1;
         memcpy(part,start,(size_t)n);
         part[n]='\\0';
-        if(line==max_lines-1 && (p[0] && p[0]!='\\n')) {
+        if(line==max_lines-1 && (p[0] && p[0]!='\n')) {
             if(n>3) { part[n-3]='.'; part[n-2]='.'; part[n-1]='.'; }
         }
         draw_text(part,x,y+(float)line*9.0f,scale,color);
         line++;
         if(*p==' ') p++;
-        else if(*p=='\\n') p++;
+        else if(*p=='\n') p++;
     }
 }
 
