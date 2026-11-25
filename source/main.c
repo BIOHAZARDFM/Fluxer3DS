@@ -518,16 +518,40 @@ static void append_emoticon(const char *value) {
     if(used+add+1<sizeof(message_draft)) memcpy(message_draft+used,value,add+1);
 }
 static void send_chat_message(void) {
-    char escaped[INPUT_MAX*2],body[INPUT_MAX*2+64],path[128],response[HTTP_BODY_MAX],detail[128]; u32 code=0;
-    ChatItem *item=active_is_dm?&dm_items[active_channel]:&channel_items[active_channel];
-    if(!message_draft[0]) { snprintf(home_status,sizeof(home_status),"Write a message first."); return; }
-    if(!json_escape(message_draft,escaped,sizeof(escaped))) return;
+    char escaped[INPUT_MAX*2],body[INPUT_MAX*2+64],path[128],detail[128];
+    static char response[HTTP_BODY_MAX];
+    u32 code=0;
+    ChatItem *item;
+    int item_count=active_is_dm?dm_count:channel_count;
+    if(active_channel<0||active_channel>=item_count) {
+        snprintf(home_status,sizeof(home_status),"No channel is selected.");
+        return;
+    }
+    item=active_is_dm?&dm_items[active_channel]:&channel_items[active_channel];
+    if(!item->id[0]) {
+        snprintf(home_status,sizeof(home_status),"This channel has no valid ID.");
+        return;
+    }
+    if(!message_draft[0]) {
+        snprintf(home_status,sizeof(home_status),"Write a message first.");
+        return;
+    }
+    if(!json_escape(message_draft,escaped,sizeof(escaped))) {
+        snprintf(home_status,sizeof(home_status),"Message could not be encoded.");
+        return;
+    }
     snprintf(body,sizeof(body),"{\"content\":\"%s\"}",escaped);
     snprintf(path,sizeof(path),"/channels/%s/messages",item->id);
+    memset(response,0,sizeof(response));
     Result rc=api_request(HTTPC_METHOD_POST,path,body,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
-    memset(escaped,0,sizeof(escaped)); memset(body,0,sizeof(body));
-    if(R_FAILED(rc)||(code!=200&&code!=201)) snprintf(home_status,sizeof(home_status),"Send failed: HTTP %lu",(unsigned long)code);
-    else { memset(message_draft,0,sizeof(message_draft)); load_messages(item->id,item->name,active_is_dm,active_channel); }
+    memset(escaped,0,sizeof(escaped));
+    memset(body,0,sizeof(body));
+    if(R_FAILED(rc)||(code!=200&&code!=201))
+        snprintf(home_status,sizeof(home_status),"Send failed: HTTP %lu",(unsigned long)code);
+    else {
+        memset(message_draft,0,sizeof(message_draft));
+        load_messages(item->id,item->name,active_is_dm,active_channel);
+    }
 }
 
 /* ---------------------------------------------------------
