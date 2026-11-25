@@ -1609,7 +1609,6 @@ static void render_top(void) {
         }
         draw_text(home_status,14,190,0.34f,theme_color(255,255,255,255));
         draw_text("Circle Pad: scroll   B: tiles",14,213,0.34f,theme_color(255,255,255,255));
-        draw_text("*playing : title.wma",12,229,0.30f,COL_MUTED);
     } else if(app_state==2) {
         draw_aero_panel(14,12,372,212);
         draw_text("FLUXER",28,25,0.86f,COL_TEXT);
@@ -1634,6 +1633,7 @@ static void render_top(void) {
             draw_text("Secure connection  |  HTTPS",38,172,0.38f,COL_MUTED);
         }
     }
+    draw_text("*playing : title.wma",12,229,0.30f,COL_MUTED);
 }
 
 /* ---------------------------------------------------------
