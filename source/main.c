@@ -1961,8 +1961,10 @@ int main(int argc, char *argv[])
                 }
             } else if(message_count>0) {
                 int max_scroll=message_count>5?message_count-5:0;
-                if(down&KEY_UP) { if(list_offset<max_scroll)list_offset++; }
-                else if(down&KEY_DOWN) { if(list_offset>0)list_offset--; }
+                /* The chat is presented newest-at-bottom: Up moves toward
+                   older messages (higher array indices), Down toward newer. */
+                if(down&KEY_DOWN) { if(list_offset<max_scroll)list_offset++; }
+                else if(down&KEY_UP) { if(list_offset>0)list_offset--; }
                 selected_index=list_offset;
             }
         }
