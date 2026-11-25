@@ -1979,6 +1979,20 @@ static void render_bottom(void) {
     }
     if(login_unzip_active) draw_unzip_overlay();
 }
+static void draw_login_spinner(float cx, float cy) {
+    static const float dx[8]={0.0f,14.0f,20.0f,14.0f,0.0f,-14.0f,-20.0f,-14.0f};
+    static const float dy[8]={-20.0f,-14.0f,0.0f,14.0f,20.0f,14.0f,0.0f,-14.0f};
+    unsigned int phase=(unsigned int)(osGetTime()/85ULL)%8U;
+    int i;
+    for(i=0;i<8;i++) {
+        unsigned int age=(unsigned int)((i+8-(int)phase)%8);
+        u8 alpha=(u8)(70U+age*25U);
+        float radius=(i==(int)phase)?5.0f:3.4f;
+        u32 color=theme_color(55,170,207,alpha);
+        C2D_DrawCircleSolid(cx+dx[i],cy+dy[i],0.0f,radius,color);
+    }
+}
+
 static void render_top(void) {
     int i;
     draw_aero_background(400,240);
@@ -2006,12 +2020,17 @@ static void render_top(void) {
         else { draw_text("Music settings",30,155,0.48f,COL_TEXT); draw_text("Choose how your SD card music plays.",30,185,0.38f,COL_MUTED); }
     } else {
         draw_aero_panel(22,14,356,210);
-        draw_text("FLUXER 3DS",38,29,0.8f,COL_TEXT);
-        draw_text("A lightweight third-party client",38,68,0.42f,COL_MUTED);
-        C2D_DrawRectSolid(38,103,0.5f,324,2,theme_color(117,190,207,255));
-        draw_text("Fluxer account sign-in",38,124,0.48f,COL_TEXT);
-        draw_text("Official Fluxer API  |  HTTPS",38,157,0.38f,COL_MUTED);
-        draw_text("No calls or video features",38,187,0.34f,COL_MUTED);
+        draw_text("Fluxer",38,29,0.92f,COL_TEXT);
+        if(app_state==4) {
+            draw_text("Signing in securely",38,82,0.50f,COL_TEXT);
+            draw_text("Completing the CAPTCHA check...",38,111,0.40f,COL_MUTED);
+            draw_login_spinner(200.0f,174.0f);
+        } else {
+            draw_text("Unofficial Fluxer client for 3DS",38,75,0.40f,COL_MUTED);
+            C2D_DrawRectSolid(38,112,0.5f,324,2,theme_color(117,190,207,255));
+            draw_text("Sign in to your Fluxer account",38,139,0.46f,COL_TEXT);
+            draw_text("Secure connection  |  HTTPS",38,172,0.38f,COL_MUTED);
+        }
     }
     if(app_state==2 && (screen_state==2||screen_state==5)) {
         C2D_DrawCircleSolid(cursor_x,cursor_y,0.2f,5.0f,theme_color(255,255,255,255));
