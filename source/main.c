@@ -419,10 +419,15 @@ static void delete_saved_session(void);
 #define MAX_MESSAGES 50
 typedef struct { char id[32]; char name[72]; char peer_id[32]; int type; } ChatItem;
 typedef struct { char id[32]; char author[48]; char content[512]; } ChatMessage;
+typedef struct { char id[32]; char name[40]; int animated; } GuildExpression;
 typedef struct { char id[32]; char name[72]; int dm_index; } FriendItem;
 static ChatItem dm_items[MAX_ITEMS], guild_items[MAX_ITEMS], channel_items[MAX_ITEMS];
 static FriendItem friend_items[MAX_ITEMS];
 static ChatMessage message_items[MAX_MESSAGES];
+#define MAX_EXPRESSIONS 32
+static GuildExpression guild_emojis[MAX_EXPRESSIONS],guild_stickers[MAX_EXPRESSIONS];
+static int guild_emoji_count=0,guild_sticker_count=0;
+static char expressions_guild_id[32]="";
 static int dm_count=0,guild_count=0,channel_count=0,message_count=0,friend_count=0;
 static int circle_scroll_latch=0;
 static int screen_state=0,selected_index=0,list_offset=0,active_guild=0,active_channel=0,active_is_dm=0;
@@ -430,7 +435,7 @@ static int chat_return_screen=0,chat_return_selection=0;
 static int settings_return_screen=0;
 static int transition_active=0,pending_guild_index=-1;
 static u64 transition_started=0;
-static int emoji_panel_open=0;
+static int emoji_panel_open=0,picker_mode=0,picker_selection=0;
 static int login_unzip_active=0;
 static u64 login_unzip_started=0;
 static char message_draft[INPUT_MAX]="";
@@ -584,12 +589,116 @@ static void sort_messages_oldest_first(void) {
     }
 }
 
+static int parse_expression_array(const char *json,GuildExpression *out,int max) {
+    const char *p=strchr(json,'[');
+    int count=0;
+    if(!p) return 0;
+    p++;
+    while(*p&&count<max) {
+        if(*p=='{') {
+            const char *end=object_end(p);
+            char obj[2048];
+            size_t n;
+            if(!end) break;
+            n=(size_t)(end-p);
+            if(n<sizeof(obj)) {
+                memcpy(obj,p,n); obj[n]='\0';
+                memset(&out[count],0,sizeof(out[count]));
+                json_top_string(obj,"id",out[count].id,sizeof(out[count].id));
+                json_top_string(obj,"name",out[count].name,sizeof(out[count].name));
+                {
+                    const char *a=strstr(obj,"\"animated\"");
+                    if(a) { a=strchr(a,':'); if(a) { a++; while(*a==' ')a++; out[count].animated=(*a=='t'); } }
+                }
+                if(out[count].id[0]&&out[count].name[0]) count++;
+            }
+            p=end;
+        } else p++;
+    }
+    return count;
+}
+static void load_guild_expressions(void) {
+    static char response[MESSAGE_BODY_MAX];
+    char path[128],detail[128],guild_id[32];
+    u32 code=0;
+    Result rc;
+    if(active_guild<0||active_guild>=guild_count) return;
+    snprintf(guild_id,sizeof(guild_id),"%s",guild_items[active_guild].id);
+    if(!guild_id[0]||strcmp(expressions_guild_id,guild_id)==0) return;
+    guild_emoji_count=0; guild_sticker_count=0;
+    snprintf(path,sizeof(path),"/guilds/%s/emojis",guild_id);
+    rc=api_request(HTTPC_METHOD_GET,path,NULL,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
+    if(R_SUCCEEDED(rc)&&code==200)
+        guild_emoji_count=parse_expression_array(response,guild_emojis,MAX_EXPRESSIONS);
+    code=0; response[0]='\0'; detail[0]='\0';
+    snprintf(path,sizeof(path),"/guilds/%s/stickers",guild_id);
+    rc=api_request(HTTPC_METHOD_GET,path,NULL,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
+    if(R_SUCCEEDED(rc)&&code==200)
+        guild_sticker_count=parse_expression_array(response,guild_stickers,MAX_EXPRESSIONS);
+    snprintf(expressions_guild_id,sizeof(expressions_guild_id),"%s",guild_id);
+}
+static int picker_item_count(void) {
+    if(picker_mode==1) return guild_emoji_count;
+    if(picker_mode==2) return guild_sticker_count;
+    return 8;
+}
+static void send_sticker_message(int index) {
+    static char body[128],path[128],detail[128],response[8192],channel_id[32];
+    u32 code=0;
+    Result rc;
+    int item_count=active_is_dm?dm_count:channel_count;
+    GuildExpression *sticker;
+    if(index<0||index>=guild_sticker_count) return;
+    if(active_channel<0||active_channel>=item_count) return;
+    sticker=&guild_stickers[index];
+    if(!sticker->id[0]) return;
+    snprintf(channel_id,sizeof(channel_id),"%s",(active_is_dm?dm_items[active_channel]:channel_items[active_channel]).id);
+    snprintf(path,sizeof(path),"/channels/%s/messages",channel_id);
+    snprintf(body,sizeof(body),"{\"sticker_ids\":[\"%s\"]}",sticker->id);
+    response[0]='\0'; detail[0]='\0';
+    rc=api_request(HTTPC_METHOD_POST,path,body,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
+    if(R_FAILED(rc)||(code!=200&&code!=201)) {
+        snprintf(home_status,sizeof(home_status),"Sticker send failed: HTTP %lu",(unsigned long)code);
+        return;
+    }
+    if(message_count>=MAX_MESSAGES) {
+        memmove(&message_items[0],&message_items[1],sizeof(ChatMessage)*(MAX_MESSAGES-1));
+        message_count=MAX_MESSAGES-1;
+    }
+    {
+        ChatMessage sent;
+        memset(&sent,0,sizeof(sent));
+        json_string(response,"id",sent.id,sizeof(sent.id));
+        snprintf(sent.author,sizeof(sent.author),"%s",account_name[0]?account_name:"You");
+        snprintf(sent.content,sizeof(sent.content),"[Sticker: %.60s]",sticker->name);
+        message_items[message_count++]=sent;
+        sort_messages_oldest_first();
+    }
+    list_offset=0;
+    snprintf(home_status,sizeof(home_status),"Sticker sent: %.60s",sticker->name);
+    emoji_panel_open=0;
+}
+static void activate_picker_item(int index) {
+    static const char *faces[]={":)",":(",":D",";)","<3",":P","xD",":O"};
+    char token[96];
+    if(picker_mode==2) { send_sticker_message(index); return; }
+    if(picker_mode==1) {
+        GuildExpression *emoji;
+        if(index<0||index>=guild_emoji_count) return;
+        emoji=&guild_emojis[index];
+        if(emoji->animated) snprintf(token,sizeof(token),"<a:%s:%s>",emoji->name,emoji->id);
+        else snprintf(token,sizeof(token),"<:%s:%s>",emoji->name,emoji->id);
+        append_emoticon(token);
+    } else if(index>=0&&index<8) append_emoticon(faces[index]);
+}
+
 static void load_messages(const char *channel_id,const char *name,int is_dm,int index) {
     static char response[MESSAGE_BODY_MAX]; char path[128],detail[128]; u32 code=0; const char *p;
     snprintf(path,sizeof(path),"/channels/%s/messages?limit=50",channel_id);
     Result rc=api_request(HTTPC_METHOD_GET,path,NULL,session_token,NULL,response,sizeof(response),&code,detail,sizeof(detail));
     if(R_FAILED(rc)||code!=200) { snprintf(home_status,sizeof(home_status),"Messages failed: HTTP %lu %.90s",(unsigned long)code,detail); return; }
     message_count=0; p=strchr(response,'['); if(p) p++;
+    if(!is_dm) load_guild_expressions();
     while(p&&*p&&message_count<MAX_MESSAGES) {
         if(*p=='{') {
             const char *end=object_end(p); char obj[4096]; size_t n;
@@ -1707,10 +1816,26 @@ static void render_bottom(void) {
         draw_text("Touch wheel to choose",173,76,0.29f,COL_TEXT);
         draw_text("A: choose   B: back",14,229,0.30f,COL_TEXT);
     } else if(screen_state==2) {
-        static const char *faces[]={":)",":(",":D",";)","<3",":P","xD",":O"};
         draw_text("MESSAGE COMPOSER",12,40,0.39f,theme_color(255,255,255,255));
         if(emoji_panel_open) {
-            for(i=0;i<8;i++) { int col=i%4,row=i/4; float x=8+col*78,y=66+row*46; draw_aero_button(x,y,72,38,faces[i],COL_ACCENT); }
+            int count=picker_item_count();
+            draw_aero_button(8,64,96,22,"FACES",picker_mode==0?COL_GREEN:COL_ACCENT);
+            draw_aero_button(112,64,96,22,"EMOJI",picker_mode==1?COL_GREEN:COL_ACCENT);
+            draw_aero_button(216,64,96,22,"STICKERS",picker_mode==2?COL_GREEN:COL_ACCENT);
+            for(i=0;i<8;i++) {
+                int col=i%4,row=i/4,idx=row*4+col;
+                float x=8+col*78,y=94+row*34;
+                char label[40];
+                if(idx<count) {
+                    if(picker_mode==0) {
+                        static const char *faces[]={":)",":(",":D",";)","<3",":P","xD",":O"};
+                        snprintf(label,sizeof(label),"%s",faces[idx]);
+                    } else if(picker_mode==1) snprintf(label,sizeof(label),":%.28s:",guild_emojis[idx].name);
+                    else snprintf(label,sizeof(label),"%.28s",guild_stickers[idx].name);
+                    draw_aero_button(x,y,72,28,label,idx==picker_selection?COL_GREEN:COL_ACCENT);
+                } else draw_aero_button(x,y,72,28,"-",theme_color(150,190,200,255));
+            }
+            if(count==0) draw_text(picker_mode==1?"No custom emoji":(picker_mode==2?"No stickers":"Choose a face"),12,159,0.30f,COL_MUTED);
         } else {
             draw_aero_panel(8,65,304,96);
             draw_text("Draft:",16,72,0.37f,COL_MUTED);
@@ -1948,10 +2073,14 @@ int main(int argc, char *argv[])
                 composer_keyboard=touch.py>=174&&touch.py<=212&&touch.px>=8&&touch.px<184;
                 composer_emoji=touch.py>=174&&touch.py<=212&&touch.px>=188&&touch.px<228;
                 composer_send=touch.py>=174&&touch.py<=212&&touch.px>=232&&touch.px<=312;
-                if(emoji_panel_open&&touch.py>=66&&touch.py<150&&touch.px>=8&&touch.px<=312) {
-                    int ei=((touch.py-66)/46)*4+(touch.px-8)/78;
-                    static const char *faces[]={":)",":(",":D",";)","<3",":P","xD",":O"};
-                    if(ei>=0&&ei<8) append_emoticon(faces[ei]);
+                if(emoji_panel_open&&touch.py>=64&&touch.py<88&&touch.px>=8&&touch.px<=312) {
+                    if(touch.px<108) picker_mode=0;
+                    else if(touch.px<212) picker_mode=1;
+                    else picker_mode=2;
+                    picker_selection=0;
+                } else if(emoji_panel_open&&touch.py>=94&&touch.py<154&&touch.px>=8&&touch.px<=312) {
+                    int ei=((touch.py-94)/34)*4+(touch.px-8)/78;
+                    if(ei>=0&&ei<picker_item_count()) activate_picker_item(ei);
                 }
             }
         }
@@ -2022,7 +2151,7 @@ int main(int argc, char *argv[])
                 else if(down&KEY_UP) { selected_index=(selected_index+1)%2; }
                 else if(down&KEY_DOWN) { selected_index=(selected_index+1)%2; }
             } else if(down&KEY_X) {
-                if(screen_state==2) emoji_panel_open=!emoji_panel_open;
+                if(screen_state==2) { emoji_panel_open=!emoji_panel_open; picker_mode=0; picker_selection=0; }
                 else {
                     delete_saved_session(); memset(session_token,0,sizeof(session_token)); memset(account_name,0,sizeof(account_name));
                     snprintf(account_name,sizeof(account_name),"Not signed in");
@@ -2030,8 +2159,17 @@ int main(int argc, char *argv[])
                     screen_state=0; selected_index=0; list_offset=0; app_state=0;
                     snprintf(status_text,sizeof(status_text),"Logged out. Saved session deleted.");
                 }
-            } else if(screen_state==2&&composer_keyboard) open_message_keyboard();
-            else if(screen_state==2&&composer_emoji) emoji_panel_open=!emoji_panel_open;
+            } else if(screen_state==2&&emoji_panel_open&&(down&(KEY_LEFT|KEY_RIGHT|KEY_UP|KEY_DOWN))) {
+                int count=picker_item_count();
+                if(count>0) {
+                    if(down&KEY_LEFT) { if(picker_selection>0) picker_selection--; }
+                    else if(down&KEY_RIGHT) { if(picker_selection<count-1) picker_selection++; }
+                    else if(down&KEY_UP) { if(picker_selection>=4) picker_selection-=4; }
+                    else if(down&KEY_DOWN) { if(picker_selection+4<count) picker_selection+=4; }
+                }
+            } else if(screen_state==2&&emoji_panel_open&&(down&KEY_A)) activate_picker_item(picker_selection);
+            else if(screen_state==2&&composer_keyboard) open_message_keyboard();
+            else if(screen_state==2&&composer_emoji) { emoji_panel_open=!emoji_panel_open; picker_mode=0; picker_selection=0; }
             else if(screen_state==2&&composer_send) send_chat_message();
             else if(screen_state==2&&(down&KEY_Y)) open_message_keyboard();
             else if(screen_state==2&&(down&KEY_A)) send_chat_message();
