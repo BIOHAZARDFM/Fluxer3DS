@@ -1800,7 +1800,7 @@ static void draw_text(
     safe_text[out] = '\0';
 
     C2D_TextFontParse(&text, ui_font, text_buffer, safe_text);
-    C2D_TextOptimize(&text);
+    /* Keep each parsed label in the shared frame buffer until frame end. */
     C2D_DrawText(&text, C2D_WithColor, x, y, 0.5f, scale, scale, color);
 }
 
@@ -2068,7 +2068,7 @@ int main(int argc, char *argv[])
     }
 
     ui_font = C2D_FontLoadSystem(CFG_REGION_USA);
-    text_buffer = C2D_TextBufNew(4096);
+    text_buffer = C2D_TextBufNew(16384);
 
     Result network_rc = init_network();
 
