@@ -567,8 +567,8 @@ static void load_guild_channels(int index) {
             snprintf(home_status,sizeof(home_status),"%d channels and categories",channel_count);
     }
 }
-/* Fluxer message IDs are decimal snowflakes. Keep newest messages first. */
-static void sort_messages_newest_first(void) {
+/* Sort decimal snowflake IDs oldest first so chat reads top-to-bottom. */
+static void sort_messages_oldest_first(void) {
     int i,j;
     for(i=1;i<message_count;i++) {
         ChatMessage item=message_items[i];
@@ -576,7 +576,7 @@ static void sort_messages_newest_first(void) {
         while(j>=0 && item.id[0] && message_items[j].id[0] &&
               (strlen(message_items[j].id)<strlen(item.id) ||
                (strlen(message_items[j].id)==strlen(item.id) &&
-                strcmp(message_items[j].id,item.id)<0))) {
+                strcmp(message_items[j].id,item.id)>0))) {
             message_items[j+1]=message_items[j];
             j--;
         }
@@ -613,9 +613,9 @@ static void load_messages(const char *channel_id,const char *name,int is_dm,int 
             message_count++; p=end;
         } else p++;
     }
-    sort_messages_newest_first();
+    sort_messages_oldest_first();
     chat_return_screen=screen_state; chat_return_selection=selected_index;
-    active_channel=index; active_is_dm=is_dm; screen_state=2; selected_index=0; list_offset=0; emoji_panel_open=0;
+    active_channel=index; active_is_dm=is_dm; screen_state=2; selected_index=0; list_offset=message_count>3?message_count-3:0; emoji_panel_open=0;
     snprintf(selected_channel_name,sizeof(selected_channel_name),"%s",name);
     snprintf(home_status,sizeof(home_status),"%d recent messages",message_count);
 }
@@ -695,11 +695,11 @@ static void send_chat_message(void) {
                     sizeof(ChatMessage)*(message_count<MAX_MESSAGES?message_count:MAX_MESSAGES-1));
         message_items[0]=sent;
         if(message_count<MAX_MESSAGES) message_count++;
-        sort_messages_newest_first();
+        sort_messages_oldest_first();
     }
     memset(message_draft,0,sizeof(message_draft));
     memset(sent_content,0,sizeof(sent_content));
-    list_offset=0;
+    list_offset=message_count>3?message_count-3:0;
     snprintf(home_status,sizeof(home_status),"Message sent.");
 }
 
@@ -1782,7 +1782,7 @@ static void render_top(void) {
         draw_text(selected_channel_name,18,12,0.62f,COL_TEXT);
         draw_text(account_name,282,18,0.34f,COL_GREEN);
         for(i=0;i<3&&i+list_offset<message_count;i++) {
-            int idx=i+list_offset; float y=49+i*56;
+            int idx=message_count-1-(list_offset+i); float y=49+i*56;
             draw_aero_panel(10,y,380,52);
             draw_text(message_items[idx].author,17,y+2,0.39f,COL_ACCENT);
             draw_wrapped_message(message_items[idx].content,17,y+14,0.36f,COL_TEXT,4);
@@ -2056,11 +2056,11 @@ int main(int argc, char *argv[])
                     }
                 }
             } else if(message_count>0) {
-                int max_scroll=message_count>5?message_count-5:0;
-                /* The chat is presented newest-at-bottom: Up moves toward
-                   older messages (higher array indices), Down toward newer. */
-                if(down&KEY_DOWN) { if(list_offset<max_scroll)list_offset++; }
-                else if(down&KEY_UP) { if(list_offset>0)list_offset--; }
+                int max_scroll=message_count>3?message_count-3:0;
+                /* Newest messages sit at the bottom: Up reveals older history,
+                   Down returns toward the newest messages. */
+                if(down&KEY_UP) { if(list_offset>0)list_offset--; }
+                else if(down&KEY_DOWN) { if(list_offset<max_scroll)list_offset++; }
                 selected_index=list_offset;
             }
         }
