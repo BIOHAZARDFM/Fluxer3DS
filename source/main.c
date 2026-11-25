@@ -596,7 +596,7 @@ static void send_chat_message(void) {
         snprintf(sent.content,sizeof(sent.content),"%s",sent_content);
         if(message_count>0)
             memmove(&message_items[1],&message_items[0],
-                    sizeof(ChatMessage)*message_count);
+                    sizeof(ChatMessage)*(message_count<MAX_MESSAGES?message_count:MAX_MESSAGES-1));
         message_items[0]=sent;
         if(message_count<MAX_MESSAGES) message_count++;
         sort_messages_newest_first();
