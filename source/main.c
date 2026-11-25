@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <math.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <curl/curl.h>
@@ -15,7 +16,6 @@ static int ui_dark_mode = 0;
 static u8 theme_primary[3] = {119,202,225};
 static u8 theme_secondary[3] = {35,151,190};
 static int theme_edit_target = 0;
-static int theme_wheel_open = 0;
 
 #define API_BASE       "https://api.fluxer.app/v1"
 #define SOC_ALIGN      0x1000
@@ -1506,7 +1506,7 @@ static void render_bottom(void) {
             } else { snprintf(label,sizeof(label),"%s",friend_items[idx].name); snprintf(symbol,sizeof(symbol),"@"); }
             draw_aero_tile(x,y,146,48,symbol,label,idx==selected_index);
         }
-        draw_text("D-pad: move   A: open   B: back   L: prev   R: next",8,224,0.24f,theme_color(255,255,255,255));
+        draw_text("D-pad: move   A: open   B: back",8,224,0.24f,theme_color(255,255,255,255));
         draw_aero_button(264,216,22,20,"^",COL_ACCENT);
         draw_aero_button(289,216,22,20,"v",COL_ACCENT);
     } else if(screen_state==4) {
@@ -1681,7 +1681,8 @@ int main(int argc, char *argv[])
                 settings_primary_touch=1;
             if(app_state==2 && screen_state==4 && touch.py>=127 && touch.py<=152 && touch.px>=14 && touch.px<=196)
                 settings_secondary_touch=1;
-            if(app_state==2 && screen_state==4 && touch.py>=102 && touch.py<=239 && touch.px>=30 && touch.px<=162) {
+            if(app_state==2 && screen_state==4 && touch.py>=102 && touch.py<=239 && touch.px>=30 && touch.px<=162 &&
+               !(touch.py>=127 && touch.py<=152)) {
                 choose_theme_color(touch.px,touch.py);
             }
             touched=touch.px>=10&&touch.px<=310&&touch.py>=185&&touch.py<=230;
