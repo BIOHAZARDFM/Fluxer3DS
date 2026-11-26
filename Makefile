@@ -82,7 +82,10 @@ endif
 
 .PHONY: all clean
 
-all: $(BUILD)
+all: $(BUILD)/cacert_bundle.h $(BUILD)
+
+$(BUILD)/cacert_bundle.h: data/ssl/cacert.pem tools/embed_ca.py | $(BUILD)
+	@python3 tools/embed_ca.py data/ssl/cacert.pem $@
 
 $(BUILD):
 	@mkdir -p $@
