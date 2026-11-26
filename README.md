@@ -8,20 +8,20 @@ A lightweight third-party Fluxer client for the Nintendo 3DS. The current milest
 - libcurl HTTPS transport using devkitPro's 3DS mbedTLS port.
 - The 3DS SSL service is initialized before TLS requests so mbedTLS can obtain hardware-generated random data.
 - Certificate and hostname verification remain enabled.
-- Uses the 3DS SD-card CA bundle at `sdmc:/config/ssl/cacert.pem`.
+- Embeds Mozilla CA roots and installs them automatically at `sdmc:/3ds/Fluxer3DS/data/ssl/cacert.pem` on first launch (no manual SD-card setup required).
 - Password sign-in, Fluxer ALTCHA proof-of-work challenge handling, TOTP/backup-code MFA, and session verification with `GET /v1/users/@me`.
 - Session token stays in RAM and is cleared when the app exits or the user signs out locally.
 - No voice or video calling.
 
-## SD card setup
+## HTTPS certificates
 
-The devkitPro 3DS curl port expects its CA bundle at this exact location:
+The CA bundle is included in the 3DSX and automatically written on first launch to:
 
 ```text
-SD:/config/ssl/cacert.pem
+SD:/3ds/Fluxer3DS/data/ssl/cacert.pem
 ```
 
-Create the `config/ssl` folders on the SD card if they do not exist, then copy the CA bundle there as `cacert.pem`. Keep the filename and folder spelling exact. Do not disable certificate verification if a certificate error occurs.
+This means Universal-DB users do not need to copy a separate file or create folders manually. Certificate and hostname verification remain enabled.
 
 ## Build
 
