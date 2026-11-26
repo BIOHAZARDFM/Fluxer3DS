@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <curl/curl.h>
 #include "altcha.h"
+#include "cacert_bundle.h"
 
 static u32 theme_color(u8 r, u8 g, u8 b, u8 a);
 static int ui_dark_mode = 0;
@@ -45,6 +46,41 @@ static int session_loaded_from_disk = 0;
 static char account_name[96] = "Not signed in";
 static char status_text[256] =
     "Connect to Wi-Fi, then sign in.";
+
+/* Universal-DB installs the 3DSX by itself. Embed the CA roots in the
+   executable and materialize the app's data file on first launch. */
+static int install_ca_bundle(void)
+{
+    const char *path = "sdmc:/3ds/Fluxer3DS/data/ssl/cacert.pem";
+    FILE *f;
+    long size = 0;
+
+    mkdir("sdmc:/3ds", 0777);
+    mkdir("sdmc:/3ds/Fluxer3DS", 0777);
+    mkdir("sdmc:/3ds/Fluxer3DS/data", 0777);
+    mkdir("sdmc:/3ds/Fluxer3DS/data/ssl", 0777);
+
+    f = fopen(path, "rb");
+    if (f) {
+        if (fseek(f, 0, SEEK_END) == 0)
+            size = ftell(f);
+        fclose(f);
+        if (size > 100000)
+            return 1;
+    }
+
+    f = fopen(path, "wb");
+    if (!f)
+        return 0;
+    if (fwrite(fluxer_ca_bundle, 1, sizeof(fluxer_ca_bundle) - 1, f)
+        != sizeof(fluxer_ca_bundle) - 1) {
+        fclose(f);
+        return 0;
+    }
+    if (fclose(f) != 0)
+        return 0;
+    return 1;
+}
 
 static char mfa_ticket[256];
 static char pending_login_body[INPUT_MAX * 4 + 128];
@@ -1026,7 +1062,7 @@ static Result api_request(
     CURL_SETOPT(CURLOPT_WRITEDATA, &output);
     CURL_SETOPT(CURLOPT_USERAGENT, "Fluxer3DS/0.4");
     CURL_SETOPT(CURLOPT_ERRORBUFFER, curl_error);
-    CURL_SETOPT(CURLOPT_CAINFO, "sdmc:/config/ssl/cacert.pem");
+    CURL_SETOPT(CURLOPT_CAINFO, "sdmc:/3ds/Fluxer3DS/data/ssl/cacert.pem");
     CURL_SETOPT(CURLOPT_NOSIGNAL, 1L);
     CURL_SETOPT(CURLOPT_CONNECTTIMEOUT, 25L);
     CURL_SETOPT(CURLOPT_TIMEOUT, 75L);
@@ -2007,19 +2043,25 @@ int main(int argc, char *argv[])
     ui_font = C2D_FontLoadSystem(CFG_REGION_USA);
     text_buffer = C2D_TextBufNew(16384);
 
-    Result network_rc = init_network();
+    if (!install_ca_bundle()) {
+        snprintf(status_text, sizeof(status_text),
+                 "Could not install HTTPS CA bundle to SD card.");
+        app_state = 3;
+    } else {
+        Result network_rc = init_network();
 
-    if (R_FAILED(network_rc)) {
+        if (R_FAILED(network_rc)) {
         snprintf(status_text, sizeof(status_text),
                  "Network init failed: 0x%08lX",
                  (unsigned long)network_rc);
 
         app_state = 3;
-    } else if (load_session_token()) {
-        snprintf(status_text, sizeof(status_text), "Restoring saved Fluxer session...");
-        verify_session();
-        if (app_state != 2 && session_loaded_from_disk && !session_token[0])
-            session_loaded_from_disk = 0;
+        } else if (load_session_token()) {
+            snprintf(status_text, sizeof(status_text), "Restoring saved Fluxer session...");
+            verify_session();
+            if (app_state != 2 && session_loaded_from_disk && !session_token[0])
+                session_loaded_from_disk = 0;
+        }
     }
 
     while (aptMainLoop()) {
