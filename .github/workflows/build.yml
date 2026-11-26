@@ -58,4 +58,5 @@ jobs:
             Fluxer3DS.3dsx
             Fluxer3DS.elf
             Fluxer3DS.smdh
+            data/ssl/cacert.pem
           if-no-files-found: error
