@@ -82,14 +82,12 @@ endif
 
 .PHONY: all clean
 
-all: $(BUILD)/cacert_bundle.h $(BUILD)
-
-$(BUILD)/cacert_bundle.h: data/ssl/cacert.pem tools/embed_ca.py | $(BUILD)
-	@python3 tools/embed_ca.py data/ssl/cacert.pem $@
-
-$(BUILD):
-	@mkdir -p $@
+all: $(BUILD)/cacert_bundle.h
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+
+$(BUILD)/cacert_bundle.h: data/ssl/cacert.pem tools/embed_ca.py
+	@mkdir -p $(BUILD)
+	@python3 tools/embed_ca.py data/ssl/cacert.pem $@
 
 clean:
 	@echo Cleaning...
