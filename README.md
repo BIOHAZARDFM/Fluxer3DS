@@ -47,9 +47,9 @@ The app checks the session with `/v1/users/@me` after sign-in.
 
 ## Not finished yet
 
-This is still an early build. It has not been tested on a physical 3DS.
+This is still an early build. It has been tested on real hardware though, and works.
 
-Communities, channels, friends, DMs, and message sending or reading are not implemented in this version. Some sign-in methods, including organization SSO and new-IP email authorization, are also not supported.
+Communities, channels, friends, DMs, and message sending or reading are implemented in this version. Some sign-in methods, including organization SSO and new-IP email authorization, are not supported. Please use email/username and password.
 
 The app can show connection diagnostics. Do not share screenshots that contain passwords or session tokens.
 
