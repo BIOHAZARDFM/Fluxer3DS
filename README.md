@@ -1,57 +1,62 @@
-# Fluxer3DS — Nintendo 3DS homebrew
+# update
 
-A lightweight third-party Fluxer client for the Nintendo 3DS. The current milestone focuses on securely connecting to Fluxer and signing in.
+Fluxer3DS is a third-party Fluxer client for the Nintendo 3DS.
 
-## Current milestone
+## What works so far
 
-- Native Citro2D interface for the top and bottom screens.
-- libcurl HTTPS transport using devkitPro's 3DS mbedTLS port.
-- The 3DS SSL service is initialized before TLS requests so mbedTLS can obtain hardware-generated random data.
-- Certificate and hostname verification remain enabled.
-- Embeds Mozilla CA roots and installs them automatically at `sdmc:/3ds/Fluxer3DS/data/ssl/cacert.pem` on first launch (no manual SD-card setup required).
-- Password sign-in, Fluxer ALTCHA proof-of-work challenge handling, TOTP/backup-code MFA, and session verification with `GET /v1/users/@me`.
-- Session token stays in RAM and is cleared when the app exits or the user signs out locally.
-- No voice or video calling.
+- Native interface using Citro2D
+- HTTPS requests through libcurl
+- Certificate and hostname checks are enabled
+- Mozilla CA certificates are included and copied to the SD card on first launch
+- Password sign-in
+- ALTCHA proof-of-work challenge handling
+- TOTP and backup-code MFA
+- Session check through `/v1/users/@me`
 
-## HTTPS certificates
-
-The CA bundle is included in the 3DSX and automatically written on first launch to:
-
-```text
-SD:/3ds/Fluxer3DS/data/ssl/cacert.pem
-```
-
-This means Universal-DB users do not need to copy a separate file or create folders manually. Certificate and hostname verification remain enabled.
+Voice and video calls are not supported.
 
 ## Build
 
-Use the GitHub Actions workflow in this repository. It builds and uploads the standard Homebrew Launcher files:
+The GitHub Actions workflow builds the Homebrew Launcher files:
 
 - `Fluxer3DS.3dsx`
 - `Fluxer3DS.smdh`
-- `Fluxer3DS.elf` (debug/build output)
+- `Fluxer3DS.elf`
 
-There is no CIA packaging step.
+Download the `Fluxer3DS-builds` artifact from a successful workflow run and extract it to your SD card. There is no CIA build.
 
-## Sign-in
+## First launch
 
-1. Enable Wi-Fi and launch Fluxer3DS from the Homebrew Launcher.
-2. Choose the sign-in button and enter your Fluxer account email/username and password using the 3DS keyboard.
-3. If Fluxer requests an ALTCHA challenge, the app attempts its proof-of-work check and retries the login.
-4. If the account requires MFA, enter the authenticator or backup code.
-5. The app verifies the returned session using `/v1/users/@me`.
+The CA bundle is built into the 3DSX. On first launch, it is copied to:
 
-Some account security flows, such as organization SSO or new-IP email authorization, are not implemented yet.
+```
+SD:/3ds/Fluxer3DS/data/ssl/cacert.pem
+```
 
-## Current limitations
+You do not need to create this folder or copy the file yourself.
 
-- This is an early implementation and has not yet been confirmed working on physical 3DS hardware.
-- The current screen is a sign-in milestone. Communities, channels, friends, DMs and message sending/reading are not implemented yet.
-- The app reports HTTPS diagnostics to help identify hardware-specific connection problems. Never share screenshots containing account credentials or session tokens.
-- “Sign out locally” clears the token from memory; it does not revoke the Fluxer session on the server.
+## Sign in
+
+1. Turn on Wi-Fi and open Fluxer3DS from the Homebrew Launcher.
+2. Select the sign-in option.
+3. Enter your Fluxer username or email and password with the 3DS keyboard.
+4. Complete the ALTCHA check if one appears.
+5. Enter your authenticator or backup code if your account uses MFA.
+
+The app checks the session with `/v1/users/@me` after sign-in.
+
+## Not finished yet
+
+This is still an early build. It has not been tested on a physical 3DS.
+
+Communities, channels, friends, DMs, and message sending or reading are not implemented in this version. Some sign-in methods, including organization SSO and new-IP email authorization, are also not supported.
+
+The app can show connection diagnostics. Do not share screenshots that contain passwords or session tokens.
+
+Choosing “Sign out locally” clears the token from the app's memory. It does not revoke the session on the Fluxer server.
 
 ## Controls
 
-- A: activate the visible action
-- START: exit
-- Touchscreen: tap the bottom-screen action button
+- **A:** Select the current option
+- **START:** Exit
+- **Touchscreen:** Tap the action button
