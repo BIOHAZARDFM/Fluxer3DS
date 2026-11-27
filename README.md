@@ -1,3 +1,5 @@
+I WANT TO CLARIFY THAT AI WAS USED IN THIS PROJECT, I KNOW IT IS BAD AND I AM SORRY FOR THAT.
+
 # update
 
 Fluxer3DS is a third-party Fluxer client for the Nintendo 3DS.
@@ -60,3 +62,6 @@ Choosing “Sign out locally” clears the token from the app's memory. It does 
 - **A:** Select the current option
 - **START:** Exit
 - **Touchscreen:** Tap the action button
+
+Make sure to send feedback/feature requests through the issues.
+have fun!
